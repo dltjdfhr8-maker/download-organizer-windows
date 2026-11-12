@@ -21,6 +21,7 @@ $checks = @(
     @{ Source = 'MainForm.MultiMove.Smoke.cs'; Main = 'DownloadOrganizer.MultiMoveSmoke' },
     @{ Source = 'MainForm.PreviewDepth.Smoke.cs'; Main = 'DownloadOrganizer.PreviewDepthSmoke' },
     @{ Source = 'ChangeJournal.BatchUndo.Smoke.cs'; Main = 'DownloadOrganizer.BatchUndoSmoke' },
+    @{ Source = 'ClassificationConsistency.Smoke.cs'; Main = 'DownloadOrganizer.ClassificationConsistencySmoke' },
     @{ Source = 'FolderRename.Smoke.cs'; Main = 'DownloadOrganizer.FolderRenameSmoke' },
     @{ Source = 'SingleFolder.Smoke.cs'; Main = 'DownloadOrganizer.SingleFolderSmoke' },
     @{ Source = 'SingleFolderWatcher.Smoke.cs'; Main = 'DownloadOrganizer.SingleFolderWatcherSmoke' },

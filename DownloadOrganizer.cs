@@ -119,7 +119,9 @@ namespace DownloadOrganizer
                         foreach (string term in Words(Path.GetFileName(child))) AddSearchKeys(choice.Terms, term);
                         try
                         {
-                            choice.SampleNames = Directory.GetFiles(child).Take(100)
+                            choice.SampleNames = Directory.GetFiles(child)
+                                .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+                                .Take(100)
                                 .Select(x => Path.GetFileNameWithoutExtension(x)).ToList();
                             foreach (string sample in choice.SampleNames)
                                 foreach (string term in Words(sample)) AddSearchKeys(choice.Terms, term);
@@ -238,8 +240,10 @@ namespace DownloadOrganizer
             bool contained = a.Any(x => b.Any(y => x.Length >= 2 && y.Length >= 2 &&
                 (x.Contains(y) || y.Contains(x))));
             if (exact == 0 && !contained) return 0;
-            double word = exact / (double)Math.Min(a.Count, b.Count);
-            if (contained) word = Math.Max(word, 0.75);
+            // Penalize unmatched words on either side. Dividing by the shorter name made
+            // "보도자료" and "행정안전부_보도자료" almost equally strong matches.
+            double word = 2.0 * exact / (a.Count + b.Count);
+            if (exact == 0 && contained) word = 0.75;
             string left = String.Join("", a), right = String.Join("", b);
             HashSet<string> ga = Bigrams(left), gb = Bigrams(right);
             double dice = ga.Count + gb.Count == 0 ? 0 :
@@ -250,6 +254,25 @@ namespace DownloadOrganizer
         public static Suggestion Suggest(FileInfo file, List<FolderChoice> folders)
         {
             return Suggest(file, folders, new LocalSearchIndex(folders));
+        }
+
+        private static FolderChoice UniqueExactFolderAnchor(string stem, string currentFolder,
+            List<FolderChoice> folders, out bool duplicated)
+        {
+            duplicated = false;
+            // A file already inside a destination subfolder may intentionally belong there.
+            // Use this shortcut only for incoming or top-level files.
+            if (folders.Any(folder => SameOrInside(currentFolder, folder.Path))) return null;
+            HashSet<string> nameWords = new HashSet<string>(Words(stem));
+            if (nameWords.Count == 0) return null;
+            List<FolderChoice> matches = new List<FolderChoice>();
+            foreach (FolderChoice folder in folders)
+            {
+                List<string> folderWords = Words(Path.GetFileName(folder.Path));
+                if (folderWords.Count > 0 && nameWords.SetEquals(folderWords)) matches.Add(folder);
+                if (matches.Count > 1) { duplicated = true; return null; }
+            }
+            return matches.Count == 1 ? matches[0] : null;
         }
 
         internal static Suggestion Suggest(FileInfo file, List<FolderChoice> folders,
@@ -307,6 +330,29 @@ namespace DownloadOrganizer
             if (best.SearchRankScore <= 0) return new Suggestion {
                 File = file.FullName, Reason = "이름과 일치하는 폴더나 기존 파일이 없습니다"
             };
+            bool duplicatedAnchor;
+            FolderChoice exactAnchor = UniqueExactFolderAnchor(stem, currentFolder, folders,
+                out duplicatedAnchor);
+            if (duplicatedAnchor)
+            {
+                best.Certain = false;
+                best.ReviewState = "후보 폴더가 비슷함";
+                best.Reason += " / 같은 핵심 이름의 폴더가 여러 곳";
+                return best;
+            }
+            if (exactAnchor != null)
+            {
+                Suggestion anchored = scores.FirstOrDefault(score => score.Folder.Equals(
+                    exactAnchor.Path, StringComparison.OrdinalIgnoreCase));
+                if (anchored != null)
+                {
+                    anchored.Certain = true;
+                    anchored.ReviewState = "";
+                    anchored.Reason = "폴더명: " + exactAnchor.Label +
+                        " / 파일명 핵심 부분과 폴더명이 정확히 일치";
+                    return anchored;
+                }
+            }
             Suggestion second = scores.OrderByDescending(s => s.SearchRankScore).Skip(1).FirstOrDefault();
             best.RunnerScore = second == null ? 0 : second.Score;
             best.RunnerUp = second == null ? "" : second.Folder;

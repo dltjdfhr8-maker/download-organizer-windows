@@ -224,7 +224,10 @@ namespace DownloadOrganizer
                 {
                     ApplyFolderIndex(result.Folders, result.Root);
                     observations = result.Observations;
-                    if (result.Moved > 0 && result.Source.Equals(result.Root, StringComparison.OrdinalIgnoreCase))
+                    // A moved file changes the target folder's sample names in either mode.
+                    // Rebuild the index for the next scan so automatic and batch decisions
+                    // do not depend on an older cached view of those samples.
+                    if (result.Moved > 0)
                         indexedAtUtc = DateTime.MinValue;
                 }
                 bool seenChanged = false;
@@ -350,7 +353,8 @@ namespace DownloadOrganizer
                 return result;
             }
             List<FileInfo> allFiles = Engine.SourceFiles(source, true);
-            LocalSearchIndex scanSearch = new LocalSearchIndex(result.Folders);
+            LocalSearchIndex scanSearch = null;
+            bool freshIndex = cached == null || mode != "automatic";
             result.Total = allFiles.Count;
             HashSet<string> presentFingerprints = mode == "automatic" ?
                 new HashSet<string>() : null;
@@ -376,6 +380,15 @@ namespace DownloadOrganizer
                 }
                 if (!Engine.Ready(file))
                 { result.Waiting++; if (mode == "automatic") result.Pending++; continue; }
+                // A cached target index is enough while there is nothing to classify.
+                // Refresh it before the first automatic decision so automatic and batch
+                // scans use the same current folder names and sample files.
+                if (!freshIndex)
+                {
+                    result.Folders = Engine.Folders(root);
+                    freshIndex = true;
+                }
+                if (scanSearch == null) scanSearch = new LocalSearchIndex(result.Folders);
                 Suggestion suggestion = Engine.Suggest(file, result.Folders, scanSearch);
                 if (!suggestion.Certain)
                 {
