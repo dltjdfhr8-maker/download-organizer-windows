@@ -107,12 +107,21 @@ namespace DownloadOrganizer
 
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
-                File.WriteAllText(Path.Combine(data, "topics.txt"), "기관업무혁신\n대학원", Encoding.UTF8);
+                File.WriteAllText(Path.Combine(data, "topics.txt"), "기관업무혁신\n대학원\n행정법", Encoding.UTF8);
                 using (StructureEditor editor = Open(source, root, data))
                 {
                     TreeView proposed = Field<TreeView>(editor, "proposed");
                     TreeNode innovation = proposed.Nodes[0].Nodes.Cast<TreeNode>().First(n => n.Text == "기관업무혁신");
                     Check(innovation.Nodes.Count == 4, "기관업무혁신 주제에 4개 파일이 배치되지 않았습니다: " + innovation.Nodes.Count);
+                    TreeNode law = proposed.Nodes[0].Nodes.Cast<TreeNode>().First(n => n.Text == "행정법");
+                    Check(law.Nodes.Count == 0, "하위 폴더의 파일이 주제 폴더로 자동 배치되었습니다.");
+                    TreeNode heldExam = proposed.Nodes[1].Nodes.Cast<TreeNode>().First(n => n.Text == Path.GetFileName(exam2019));
+                    Check(heldExam.Nodes.Cast<TreeNode>().Any(n => n.Text == "행정법.pdf"),
+                        "하위 폴더의 파일이 원래 하위 폴더 묶음에 남지 않았습니다.");
+                    List<string> topicFiles = editor.TopicSourceFiles();
+                    Check(topicFiles.Count == names.Length && topicFiles.All(f =>
+                        Path.GetDirectoryName(f).Equals(Engine.Full(source), StringComparison.OrdinalIgnoreCase)),
+                        "주제 추천 대상에 하위 폴더 파일이 포함되었습니다: " + topicFiles.Count);
                     Check(proposed.Nodes[1].Text.StartsWith("정리하지 않고 둘 파일"), "보류 영역 이름이 바뀌지 않았습니다.");
                     TreeView current = Field<TreeView>(editor, "current");
                     Check(current.Nodes[1].Text.EndsWith("· 감시 중"), "왼쪽 감시 폴더 이름이 바뀌지 않았습니다.");

@@ -77,8 +77,8 @@ namespace DownloadOrganizer
                                 }
                                 stage = 1;
                             }
-                            else if (stage == 1 && Directory.GetFiles(budget, "*.txt").Length == 51 &&
-                                Directory.GetFiles(meetings, "*.txt").Length == 51)
+                            else if (stage == 1 && Directory.GetFiles(budget, "*.txt").Length == 26 &&
+                                Directory.GetFiles(meetings, "*.txt").Length == 26)
                             {
                                 stage = 2;
                                 monitor.Stop();
@@ -98,7 +98,12 @@ namespace DownloadOrganizer
                 if (failure != "") throw new Exception(failure);
                 if (stage != 2 || Directory.GetFiles(source).Length != 0)
                     throw new Exception("files remain in downloads");
-                Console.WriteLine("PASS: 100 rapid completed downloads sorted into both folders");
+                if (Directory.GetFiles(nested, "*.txt").Length != 50 ||
+                    Directory.GetFiles(budget, "*.txt").Length != 26 ||
+                    Directory.GetFiles(meetings, "*.txt").Length != 26)
+                    throw new Exception("watch-subfolder files were moved automatically: nested=" +
+                        Directory.GetFiles(nested, "*.txt").Length);
+                Console.WriteLine("PASS: 100 rapid downloads; top-level files sorted, watch-subfolder files left in place");
                 return 0;
             }
             catch (Exception ex) { Console.Error.WriteLine("FAIL: " + ex); return 1; }

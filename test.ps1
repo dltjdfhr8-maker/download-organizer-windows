@@ -19,7 +19,8 @@ $checks = @(
     @{ Source = 'FolderRename.Smoke.cs'; Main = 'DownloadOrganizer.FolderRenameSmoke' },
     @{ Source = 'SingleFolder.Smoke.cs'; Main = 'DownloadOrganizer.SingleFolderSmoke' },
     @{ Source = 'SingleFolderWatcher.Smoke.cs'; Main = 'DownloadOrganizer.SingleFolderWatcherSmoke' },
-    @{ Source = 'TopicSuggest.Smoke.cs'; Main = 'DownloadOrganizer.TopicSuggestSmoke' }
+    @{ Source = 'TopicSuggest.Smoke.cs'; Main = 'DownloadOrganizer.TopicSuggestSmoke' },
+    @{ Source = 'MainForm.Destination.Smoke.cs'; Main = 'DownloadOrganizer.DestinationSmoke' }
 )
 
 foreach ($check in $checks) {

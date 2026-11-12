@@ -403,6 +403,9 @@ namespace DownloadOrganizer
             if (String.IsNullOrEmpty(settings.Source)) settings.Source = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
             BuildUi();
             SoftUi.Apply(this);
+            // The flat style hid the box's border, so it looked like empty space.
+            folderBox.FlatStyle = FlatStyle.System;
+            folderBox.HandleCreated += delegate { ShowFolderBoxHint(); };
             sourceBox.Text = settings.Source; rootBox.Text = settings.Root;
             sourceBox.TextChanged += FolderSettingChanged;
             rootBox.TextChanged += FolderSettingChanged;
@@ -543,9 +546,9 @@ namespace DownloadOrganizer
             helpTips.SetToolTip(sameFolderButton, "선택한 폴더와 그 하위 폴더의 파일을 같은 구조 안에서 정리합니다.");
             helpTips.SetToolTip(rootButton, "정리된 파일을 보관할 상위 폴더를 선택합니다.");
             helpTips.SetToolTip(scanButton, "현재 파일의 추천 폴더를 다시 표시합니다. 파일은 옮기지 않습니다.");
-            helpTips.SetToolTip(batchButton, "현재 파일 중 추천이 확실한 파일을 한 번에 옮깁니다. 한 폴더 방식에서는 하위 폴더의 파일도 포함합니다.");
+            helpTips.SetToolTip(batchButton, "현재 파일 중 추천이 확실한 파일을 한 번에 옮깁니다. 감시 폴더의 하위 폴더 안 파일은 옮기지 않습니다. 한 폴더 방식에서는 하위 폴더의 파일도 포함합니다.");
             helpTips.SetToolTip(structureButton, "현재 폴더와 추천 구조를 나란히 보고 수정합니다.");
-            helpTips.SetToolTip(automaticBox, "새로 받은 파일을 확인해 추천이 확실하면 자동으로 옮깁니다. 한 폴더 방식에서는 하위 폴더의 새 파일도 확인합니다.");
+            helpTips.SetToolTip(automaticBox, "새로 받은 파일을 확인해 추천이 확실하면 자동으로 옮깁니다. 감시 폴더의 하위 폴더 안 파일은 옮기지 않습니다. 한 폴더 방식에서는 하위 폴더의 새 파일도 확인합니다.");
             helpTips.SetToolTip(startupBox, "Windows에 로그인할 때 이 프로그램을 자동으로 실행합니다.");
             helpTips.SetToolTip(list, "파일을 선택하면 아래에서 목적지 폴더를 바꿀 수 있습니다.");
             helpTips.SetToolTip(folderLabel, "선택한 파일을 옮길 폴더입니다.");
@@ -631,13 +634,7 @@ namespace DownloadOrganizer
                     (DateTime.UtcNow - indexedAtUtc).TotalSeconds < 60) return true;
                 folders = Engine.Folders(root);
                 indexedRoot = root; indexedAtUtc = DateTime.UtcNow;
-                string selected = folderBox.SelectedItem is FolderChoice ? ((FolderChoice)folderBox.SelectedItem).Path : "";
-                folderBox.Items.Clear();
-                foreach (FolderChoice folder in folders)
-                {
-                    folderBox.Items.Add(folder);
-                    if (folder.Path == selected) folderBox.SelectedItem = folder;
-                }
+                FillFolderBox(root);
                 if (folders.Count == 0) { status.Text = "정리할 상위 폴더 안에 하위 폴더가 없습니다."; return false; }
                 return true;
             }
@@ -684,9 +681,10 @@ namespace DownloadOrganizer
             if (index < 0 || index >= previewRows.Count) return;
             Suggestion suggestion = previewRows[index].Suggestion;
             folderBox.SelectedIndex = -1;
-            for (int i = 0; i < folderBox.Items.Count; i++)
+            for (int i = 1; i < folderBox.Items.Count; i++)
                 if (((FolderChoice)folderBox.Items[i]).Path == suggestion.Folder)
                 { folderBox.SelectedIndex = i; return; }
+            status.Text = previewRows[index].Name + ": 추천 폴더가 없습니다. '선택 파일의 목적지'에서 옮길 폴더를 직접 고르세요.";
         }
 
         private void AutomaticChanged(object sender, EventArgs e)
@@ -805,10 +803,11 @@ namespace DownloadOrganizer
             int index = list.SelectedIndices[0];
             if (index < 0 || index >= previewRows.Count) return;
             string selectedPath = ((FolderChoice)folderBox.SelectedItem).Path;
-            if (folders.Count == 0 || !indexedRoot.Equals(Engine.Full(rootBox.Text.Trim()), StringComparison.OrdinalIgnoreCase))
+            if (!indexedRoot.Equals(Engine.Full(rootBox.Text.Trim()), StringComparison.OrdinalIgnoreCase))
             { status.Text = "먼저 미리보기를 새로고침하세요."; BeginPreview(); return; }
             Suggestion suggestion = previewRows[index].Suggestion;
-            FolderChoice selected = folders.FirstOrDefault(f => f.Path == selectedPath);
+            FolderChoice selected = selectedPath.Equals(indexedRoot, StringComparison.OrdinalIgnoreCase) ?
+                (FolderChoice)folderBox.SelectedItem : folders.FirstOrDefault(f => f.Path == selectedPath);
             if (selected == null) { status.Text = "선택한 목적지 폴더를 찾을 수 없습니다."; return; }
             if (Engine.Full(Path.GetDirectoryName(suggestion.File)).Equals(Engine.Full(selected.Path),
                 StringComparison.OrdinalIgnoreCase))

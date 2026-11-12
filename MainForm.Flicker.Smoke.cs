@@ -46,7 +46,7 @@ namespace DownloadOrganizer
                     Timer monitor = new Timer { Interval = 100 };
                     monitor.Tick += delegate
                     {
-                        if (!monitoring && folderBox.Items.Count == 2)
+                        if (!monitoring && folderBox.Items.Count == 3)
                         {
                             folderBox.SelectedIndex = 0;
                             monitoring = true;

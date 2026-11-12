@@ -58,11 +58,14 @@ namespace DownloadOrganizer
                 Check(first.Moved == 0 && first.Moves.Count == 0, "first observation moved files");
                 ScanResult second = Scan(source, root, "automatic", first.Folders,
                     seen, first.Observations, 0);
-                Check(second.Moved == names.Length + 1 && second.Failed == 0 &&
+                Check(second.Moved == names.Length && second.Failed == 0 &&
                     second.SeenAdds.Count == 0, "rapid downloads were not all moved");
-                Check(Directory.GetFiles(source, "*.txt", SearchOption.AllDirectories).Length == 0 &&
-                    Directory.GetFiles(root, "*.txt", SearchOption.AllDirectories).Length == names.Length + 3,
-                    "download destinations are incomplete");
+                Check(File.Exists(nestedFile) &&
+                    Directory.GetFiles(source, "*.txt", SearchOption.AllDirectories).Length == 1 &&
+                    Directory.GetFiles(root, "*.txt", SearchOption.AllDirectories).Length == names.Length + 2,
+                    "download destinations are incomplete or a watch-subfolder file was moved");
+                Check(preview.Rows.Any(row => row.Name == Path.Combine("새로 받은 묶음", "예산_다섯째.txt") &&
+                    row.State == "하위 폴더 · 직접 옮기기"), "watch-subfolder file was not marked for manual move");
                 ScanResult third = Scan(source, root, "automatic", second.Folders,
                     new HashSet<string>(), second.Observations, 0);
                 Check(third.Moved == 0, "files moved twice");

@@ -446,6 +446,13 @@ namespace DownloadOrganizer
                 leftSourceFolders[fileFolder].Nodes.Add(MakeNode(file.Name, tag, Color.DimGray));
                 result.DownloadFiles.Add(tag.OriginalPath);
                 TreeNode destination = null;
+                // Files already grouped in a watch subfolder are moved only by dragging.
+                bool inSubfolder = !fileFolder.Equals(source, StringComparison.OrdinalIgnoreCase);
+                if (inSubfolder)
+                {
+                    rightSourceFolders[fileFolder].Nodes.Add(MakeNode(file.Name, tag, Color.DarkBlue));
+                    continue;
+                }
                 if (topicLeaves.Count > 0)
                 {
                     string stem = Path.GetFileNameWithoutExtension(file.Name);
@@ -518,12 +525,23 @@ namespace DownloadOrganizer
             return lines;
         }
 
+        // Files inside watch subfolders are already grouped by the user; suggest only from loose files.
+        internal List<string> TopicSourceFiles()
+        {
+            return downloadFiles.Where(f => Engine.Full(Path.GetDirectoryName(f))
+                .Equals(source, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+
         private void SuggestTopics()
         {
             if (suggesting || working || loading || !Loaded)
             { status.Text = "폴더를 다 읽은 뒤 다시 눌러 주세요."; return; }
-            List<string> files = downloadFiles.ToList();
-            if (files.Count == 0) { status.Text = "감시 폴더에 파일이 없어 추천할 주제가 없습니다."; return; }
+            List<string> files = TopicSourceFiles();
+            if (files.Count == 0)
+            {
+                status.Text = "감시 폴더 바로 아래에 파일이 없어 추천할 주제가 없습니다. 하위 폴더의 파일은 추천에서 제외됩니다.";
+                return;
+            }
             List<string> existingNames = snapshot.TargetDirectories.Select(d => Path.GetFileName(d)).ToList();
             suggesting = true; suggestTopicsButton.Enabled = false;
             status.Text = "파일 " + files.Count + "개의 이름을 살펴 주제를 고르는 중입니다...";

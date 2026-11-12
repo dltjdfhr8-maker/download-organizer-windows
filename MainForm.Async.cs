@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -225,6 +226,14 @@ namespace DownloadOrganizer
             worker.RunWorkerAsync();
         }
 
+        // In separate-folder mode, a file below a subfolder of the watch folder. In same-folder
+        // mode the subfolders are the sorted structure itself, so this never applies.
+        internal static bool InWatchSubfolder(FileInfo file, string source, bool sameFolder)
+        {
+            return !sameFolder && !Engine.Full(file.DirectoryName).Equals(Engine.Full(source),
+                StringComparison.OrdinalIgnoreCase);
+        }
+
         private static ScanResult RunScan(string source, string root, string mode,
             List<FolderChoice> cached, HashSet<string> seen,
             Dictionary<string, string> observed, long startedAt, Func<bool> canceled = null)
@@ -257,6 +266,8 @@ namespace DownloadOrganizer
                     if (!suggestion.Certain && runner != null && suggestion.Score >= 0.62)
                         reason += " / 2순위: " + runner.Label;
                     if (!Engine.Ready(file)) state = "다운로드 완료 대기";
+                    else if (InWatchSubfolder(file, source, sameFolder) && !alreadySorted)
+                        state = "하위 폴더 · 직접 옮기기";
                     result.Rows.Add(new ScanRow {
                         Name = file.FullName.Substring(source.Length).TrimStart(Path.DirectorySeparatorChar),
                         Folder = first == null ? "" : first.Label,
@@ -268,6 +279,8 @@ namespace DownloadOrganizer
             foreach (FileInfo file in files)
             {
                 if (mode == "automatic" && canceled != null && canceled()) break;
+                // Files inside a watch subfolder are never moved automatically, even when certain.
+                if (InWatchSubfolder(file, source, sameFolder)) continue;
                 string fingerprint = Engine.Fingerprint(file);
                 if (presentFingerprints != null) presentFingerprints.Add(fingerprint);
                 if (mode == "automatic")
@@ -339,10 +352,11 @@ namespace DownloadOrganizer
             if (ReferenceEquals(index, folders) && indexedRoot.Equals(root, StringComparison.OrdinalIgnoreCase))
                 return;
             bool samePaths = indexedRoot.Equals(root, StringComparison.OrdinalIgnoreCase) &&
-                folderBox.Items.Count == index.Count;
+                folderBox.Items.Count == index.Count + 1 &&
+                ((FolderChoice)folderBox.Items[0]).Path.Equals(root, StringComparison.OrdinalIgnoreCase);
             if (samePaths)
                 for (int i = 0; i < index.Count; i++)
-                    if (!((FolderChoice)folderBox.Items[i]).Path.Equals(index[i].Path,
+                    if (!((FolderChoice)folderBox.Items[i + 1]).Path.Equals(index[i].Path,
                         StringComparison.OrdinalIgnoreCase)) { samePaths = false; break; }
             if (samePaths)
             {
@@ -350,21 +364,50 @@ namespace DownloadOrganizer
                 indexedAtUtc = DateTime.UtcNow;
                 return;
             }
-            string selected = folderBox.SelectedItem is FolderChoice ?
-                ((FolderChoice)folderBox.SelectedItem).Path : "";
             folders = index;
             indexedRoot = root; indexedAtUtc = DateTime.UtcNow;
+            FillFolderBox(root);
+        }
+
+        // The target root itself is always a destination, so the list is never empty
+        // even before the root has any subfolders.
+        private static FolderChoice RootChoice(string root)
+        {
+            string full = Engine.Full(root);
+            string name = Path.GetFileName(full);
+            if (name == "") name = full;
+            return new FolderChoice { Path = full, Label = name + " (상위 폴더에 바로 두기)" };
+        }
+
+        private void FillFolderBox(string root)
+        {
+            string selected = folderBox.SelectedItem is FolderChoice ?
+                ((FolderChoice)folderBox.SelectedItem).Path : "";
             folderBox.BeginUpdate();
             try
             {
-            folderBox.Items.Clear();
-            foreach (FolderChoice folder in folders)
-            {
-                folderBox.Items.Add(folder);
-                if (folder.Path == selected) folderBox.SelectedItem = folder;
-            }
+                folderBox.Items.Clear();
+                folderBox.Items.Add(RootChoice(root));
+                foreach (FolderChoice folder in folders) folderBox.Items.Add(folder);
+                foreach (object item in folderBox.Items)
+                    if (((FolderChoice)item).Path == selected) { folderBox.SelectedItem = item; break; }
             }
             finally { folderBox.EndUpdate(); }
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, string lParam);
+
+        private void ShowFolderBoxHint()
+        {
+            const int SetCueBanner = 0x1703;
+            try
+            {
+                if (folderBox.IsHandleCreated)
+                    SendMessage(folderBox.Handle, SetCueBanner, IntPtr.Zero,
+                        "목록에서 파일을 고른 뒤 옮길 폴더를 선택하세요");
+            }
+            catch { }
         }
 
         private bool ScanStillCurrent(ScanResult result)
@@ -390,7 +433,9 @@ namespace DownloadOrganizer
             }
             finally { list.EndUpdate(); }
             status.Text = result.Total + "개 파일 중 최근 " + result.Rows.Count +
-                "개를 표시했습니다. 하위 폴더 " + result.Folders.Count + "개를 비교했습니다.";
+                "개를 표시했습니다. " + (result.Folders.Count == 0 ?
+                "정리할 상위 폴더에 하위 폴더가 없어 자동 추천은 없습니다. 목적지에서 상위 폴더를 고르거나 '새 폴더 구조 제안'으로 폴더를 만드세요." :
+                "하위 폴더 " + result.Folders.Count + "개를 비교했습니다.");
         }
     }
 }
