@@ -65,6 +65,9 @@ namespace DownloadOrganizer
             string testRoot = Path.Combine(Path.GetTempPath(), "DestinationSmoke-" + Guid.NewGuid().ToString("N"));
             try
             {
+                MethodInfo appMain = typeof(Program).GetMethod("Main", BindingFlags.Public | BindingFlags.Static);
+                if (appMain == null || appMain.GetCustomAttributes(typeof(STAThreadAttribute), false).Length == 0)
+                    throw new Exception("앱의 Main에 [STAThread]가 없어 드래그·놓기 창을 열 수 없습니다.");
                 string source = Path.Combine(testRoot, "downloads");
                 string root = Path.Combine(testRoot, "교육자료");
                 string data = Path.Combine(testRoot, "settings");

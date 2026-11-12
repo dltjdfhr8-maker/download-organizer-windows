@@ -972,7 +972,6 @@ namespace DownloadOrganizer
 
     public static class Program
     {
-        [STAThread]
         // Appends the full error (with stack trace) to a local log so it can be diagnosed later.
         // Only the exception is written: no file contents, nothing leaves the computer.
         internal static string LogError(Exception error)
@@ -991,6 +990,8 @@ namespace DownloadOrganizer
             catch { return ""; }
         }
 
+        // Must stay directly on Main: drag and drop and other OLE features need an STA thread.
+        [STAThread]
         public static int Main(string[] args)
         {
             if (args.Length > 0 && args[0] == "--self-test") return SelfTest();
