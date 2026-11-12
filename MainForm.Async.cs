@@ -13,11 +13,12 @@ namespace DownloadOrganizer
     {
         public string Name, Folder, Reason, State;
         public Suggestion Suggestion;
+        public string DirectoryPath;
     }
 
     internal class ScanResult
     {
-        public string Source, Root, Mode;
+        public string Source, Root, Mode, PreviewFolder;
         public List<FolderChoice> Folders;
         public List<ScanRow> Rows = new List<ScanRow>();
         public List<MoveEntry> Moves = new List<MoveEntry>();
@@ -25,6 +26,14 @@ namespace DownloadOrganizer
         public HashSet<string> RetainedSeen = new HashSet<string>();
         public Dictionary<string, string> Observations;
         public int Total, Moved, Review, Waiting, Failed, Pending;
+        public int PreviewFiles, PreviewDirectories;
+    }
+
+    internal class SelectedMoveResult
+    {
+        public readonly List<MoveEntry> Moves = new List<MoveEntry>();
+        public int Waiting, Failed, AlreadyThere;
+        public string FirstError = "";
     }
 
     public partial class MainForm
@@ -32,6 +41,7 @@ namespace DownloadOrganizer
         private bool scanBusy, scanMovesFiles, previewQueued;
         private int automaticScanGeneration;
         private Action queuedAction;
+        private string pendingMoveSummary = "";
 
         private void CancelAutomaticScan()
         {
@@ -49,28 +59,19 @@ namespace DownloadOrganizer
         private void BeginAutomaticScan() { StartScan("automatic"); }
         private void BeginBatchMove() { StartScan("batch"); }
 
-        private void BeginSelectedMove(string source, string destinationFolder, string folderLabel)
+        private void BeginSelectedMoves(List<string> sources, string destinationFolder, string folderLabel)
         {
             if (scanBusy)
             {
-                queuedAction = delegate { BeginSelectedMove(source, destinationFolder, folderLabel); };
+                queuedAction = delegate { BeginSelectedMoves(sources, destinationFolder, folderLabel); };
                 return;
             }
             SetScanBusy(true, true);
-            status.Text = Path.GetFileName(source) + "을(를) 옮기는 중입니다...";
+            status.Text = sources.Count + "개 선택 파일을 옮기는 중입니다...";
             BackgroundWorker worker = new BackgroundWorker();
             worker.DoWork += delegate(object sender, DoWorkEventArgs e)
             {
-                if (!File.Exists(source)) throw new IOException("파일이 이미 이동되었거나 없어졌습니다.");
-                FileInfo original = new FileInfo(source);
-                if (!Engine.Ready(original)) throw new IOException("파일의 다운로드가 끝나기를 기다려 주세요.");
-                string destination = Engine.Move(source, destinationFolder);
-                FileInfo moved = new FileInfo(destination);
-                e.Result = new MoveEntry {
-                    Source = source, Destination = destination,
-                    Length = moved.Length, LastWriteTicks = moved.LastWriteTimeUtc.Ticks,
-                    When = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), Reason = "사용자 선택"
-                };
+                e.Result = MoveChosenFiles(sources, destinationFolder);
             };
             worker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs e)
             {
@@ -82,21 +83,61 @@ namespace DownloadOrganizer
                     FinishPendingExit();
                     return;
                 }
-                MoveEntry result = (MoveEntry)e.Result;
+                SelectedMoveResult result = (SelectedMoveResult)e.Result;
                 string warning = "";
-                try { CommitMoves(new List<MoveEntry> { result }); }
-                catch (Exception ex) { warning = " 변경 이력 저장 실패: " + ex.Message; }
+                if (result.Moves.Count > 0)
+                    try { CommitMoves(result.Moves); }
+                    catch (Exception ex) { warning = " 변경 이력 저장 실패: " + ex.Message; }
                 if (Engine.Full(sourceBox.Text.Trim()).Equals(Engine.Full(rootBox.Text.Trim()),
                     StringComparison.OrdinalIgnoreCase))
                 {
-                    string fingerprint = Engine.Fingerprint(new FileInfo(result.Destination));
-                    if (!settings.Seen.Contains(fingerprint)) { settings.Seen.Add(fingerprint); Save(); }
+                    bool changed = false;
+                    foreach (MoveEntry moved in result.Moves)
+                    {
+                        string fingerprint = Engine.Fingerprint(new FileInfo(moved.Destination));
+                        if (!settings.Seen.Contains(fingerprint)) { settings.Seen.Add(fingerprint); changed = true; }
+                    }
+                    if (changed) Save();
                 }
                 if (FinishPendingExit()) return;
                 BeginPreview();
-                status.Text = Path.GetFileName(source) + "을(를) " + folderLabel + "에 옮겼습니다." + warning;
+                pendingMoveSummary = result.Moves.Count + "개를 '" + folderLabel +
+                    "'에 이동, " + result.Waiting + "개 다운로드 대기, " + result.AlreadyThere +
+                    "개 이미 있음, " + result.Failed + "개 실패." +
+                    (result.FirstError == "" ? "" : " 실패 이유: " + result.FirstError) + warning;
+                status.Text = pendingMoveSummary;
             };
             worker.RunWorkerAsync();
+        }
+
+        internal static SelectedMoveResult MoveChosenFiles(IEnumerable<string> sources, string destinationFolder)
+        {
+            SelectedMoveResult result = new SelectedMoveResult();
+            foreach (string source in sources.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    if (!File.Exists(source)) throw new IOException("파일을 찾을 수 없습니다: " + Path.GetFileName(source));
+                    if (Engine.Full(Path.GetDirectoryName(source)).Equals(
+                        Engine.Full(destinationFolder), StringComparison.OrdinalIgnoreCase))
+                    { result.AlreadyThere++; continue; }
+                    FileInfo original = new FileInfo(source);
+                    if (!Engine.Ready(original)) { result.Waiting++; continue; }
+                    string destination = Engine.Move(source, destinationFolder);
+                    FileInfo moved = new FileInfo(destination);
+                    result.Moves.Add(new MoveEntry {
+                        Source = source, Destination = destination,
+                        Length = moved.Length, LastWriteTicks = moved.LastWriteTimeUtc.Ticks,
+                        When = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), Reason = "사용자 선택"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    result.Failed++;
+                    if (result.FirstError == "") result.FirstError = ex.Message;
+                }
+            }
+            return result;
         }
 
         private void CommitMoves(List<MoveEntry> moves)
@@ -132,7 +173,13 @@ namespace DownloadOrganizer
             catch (Exception ex) { status.Text = ex.Message; return; }
             if (error != "") { status.Text = error; return; }
             source = Engine.Full(source); root = Engine.Full(root);
-            List<FolderChoice> cached = mode == "automatic" && folders.Count > 0 &&
+            string viewFolder = mode == "preview" && previewFolder != "" &&
+                Engine.SameOrInside(previewFolder, source) && Directory.Exists(previewFolder) ?
+                Engine.Full(previewFolder) : source;
+            if (mode == "preview") previewFolder = viewFolder;
+            List<FolderChoice> cached = (mode == "automatic" ||
+                (mode == "preview" && !viewFolder.Equals(source, StringComparison.OrdinalIgnoreCase))) &&
+                folders.Count > 0 &&
                 indexedRoot.Equals(root, StringComparison.OrdinalIgnoreCase) &&
                 (DateTime.UtcNow - indexedAtUtc).TotalSeconds < 60 ? folders : null;
             HashSet<string> seen = new HashSet<string>(settings.Seen);
@@ -153,7 +200,7 @@ namespace DownloadOrganizer
                 e.Result = RunScan(source, root, mode, cached, seen, observed, startedAt,
                     mode == "automatic" ? new Func<bool>(delegate {
                         return Thread.VolatileRead(ref automaticScanGeneration) != generation;
-                    }) : null);
+                    }) : null, viewFolder);
             };
             worker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs e)
             {
@@ -214,8 +261,13 @@ namespace DownloadOrganizer
                     if (result.Moved > 0 || result.Review > 0) previewQueued = true;
                 }
                 else if (current)
-                    status.Text = result.Moved + "개 이동, " + result.Review + "개 확인 필요, " +
+                {
+                    string summary = result.Moved + "개 이동, " + result.Review + "개 확인 필요, " +
                         result.Waiting + "개 완료 대기, " + result.Failed + "개 실패" + historyWarning;
+                    status.Text = summary;
+                    if (result.Mode == "batch" && result.Moved > 0)
+                    { pendingMoveSummary = summary; previewQueued = true; }
+                }
                 RunQueuedAction();
                 if (previewQueued && !scanBusy)
                 {
@@ -234,22 +286,43 @@ namespace DownloadOrganizer
                 StringComparison.OrdinalIgnoreCase);
         }
 
-        private static ScanResult RunScan(string source, string root, string mode,
+        internal static ScanResult RunScan(string source, string root, string mode,
             List<FolderChoice> cached, HashSet<string> seen,
-            Dictionary<string, string> observed, long startedAt, Func<bool> canceled = null)
+            Dictionary<string, string> observed, long startedAt, Func<bool> canceled = null,
+            string viewFolder = null)
         {
             ScanResult result = new ScanResult {
-                Source = source, Root = root, Mode = mode,
+                Source = source, Root = root, Mode = mode, PreviewFolder = viewFolder,
                 Folders = cached ?? Engine.Folders(root), Observations = observed
             };
-            LocalSearchIndex search = new LocalSearchIndex(result.Folders);
             bool sameFolder = source.Equals(root, StringComparison.OrdinalIgnoreCase);
-            List<FileInfo> files = Engine.SourceFiles(source, true);
-            result.Total = files.Count;
-            HashSet<string> presentFingerprints = mode == "automatic" ?
-                new HashSet<string>() : null;
             if (mode == "preview")
             {
+                string folder = viewFolder == null ? source : viewFolder;
+                string[] immediateDirectories;
+                try { immediateDirectories = Directory.GetDirectories(folder); }
+                catch (Exception ex) { throw new IOException("미리볼 폴더를 읽지 못했습니다: " + ex.Message); }
+                foreach (string path in immediateDirectories.OrderBy(path => Path.GetFileName(path),
+                    StringComparer.CurrentCultureIgnoreCase))
+                {
+                    try
+                    {
+                        FileAttributes attributes = File.GetAttributes(path);
+                        if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Hidden |
+                            FileAttributes.System)) != 0 || Path.GetFileName(path).StartsWith(".",
+                            StringComparison.Ordinal)) continue;
+                        result.Rows.Add(new ScanRow {
+                            Name = "▸ " + Path.GetFileName(path), Reason = "두 번 클릭해 이 폴더 보기",
+                            State = "폴더", DirectoryPath = Engine.Full(path)
+                        });
+                    }
+                    catch { }
+                }
+                List<FileInfo> files = Engine.SourceFiles(folder);
+                LocalSearchIndex search = files.Count == 0 ? null : new LocalSearchIndex(result.Folders);
+                result.PreviewFiles = files.Count;
+                result.PreviewDirectories = result.Rows.Count;
+                result.Total = files.Count;
                 foreach (FileInfo file in files.Take(1000))
                 {
                     Suggestion suggestion = Engine.Suggest(file, result.Folders, search);
@@ -269,14 +342,19 @@ namespace DownloadOrganizer
                     else if (InWatchSubfolder(file, source, sameFolder) && !alreadySorted)
                         state = "하위 폴더 · 직접 옮기기";
                     result.Rows.Add(new ScanRow {
-                        Name = file.FullName.Substring(source.Length).TrimStart(Path.DirectorySeparatorChar),
+                        Name = file.Name,
                         Folder = first == null ? "" : first.Label,
                         Reason = reason, State = state, Suggestion = suggestion
                     });
                 }
                 return result;
             }
-            foreach (FileInfo file in files)
+            List<FileInfo> allFiles = Engine.SourceFiles(source, true);
+            LocalSearchIndex scanSearch = new LocalSearchIndex(result.Folders);
+            result.Total = allFiles.Count;
+            HashSet<string> presentFingerprints = mode == "automatic" ?
+                new HashSet<string>() : null;
+            foreach (FileInfo file in allFiles)
             {
                 if (mode == "automatic" && canceled != null && canceled()) break;
                 // Files inside a watch subfolder are never moved automatically, even when certain.
@@ -298,7 +376,7 @@ namespace DownloadOrganizer
                 }
                 if (!Engine.Ready(file))
                 { result.Waiting++; if (mode == "automatic") result.Pending++; continue; }
-                Suggestion suggestion = Engine.Suggest(file, result.Folders, search);
+                Suggestion suggestion = Engine.Suggest(file, result.Folders, scanSearch);
                 if (!suggestion.Certain)
                 {
                     result.Review++;
@@ -416,6 +494,8 @@ namespace DownloadOrganizer
             {
                 return Engine.Full(sourceBox.Text.Trim()).Equals(result.Source, StringComparison.OrdinalIgnoreCase) &&
                     Engine.Full(rootBox.Text.Trim()).Equals(result.Root, StringComparison.OrdinalIgnoreCase) &&
+                    (result.Mode != "preview" || Engine.Full(previewFolder == "" ? result.Source : previewFolder)
+                        .Equals(Engine.Full(result.PreviewFolder), StringComparison.OrdinalIgnoreCase)) &&
                     (result.Mode != "automatic" || automaticBox.Checked);
             }
             catch { return false; }
@@ -423,19 +503,58 @@ namespace DownloadOrganizer
 
         private void ShowPreviewRows(ScanResult result)
         {
+            allPreviewRows = result.Rows;
+            ApplyReasonFilter(false);
+            string relative = result.PreviewFolder.Equals(result.Source, StringComparison.OrdinalIgnoreCase) ?
+                "" : result.PreviewFolder.Substring(result.Source.Length).TrimStart(Path.DirectorySeparatorChar);
+            previewPathLabel.Text = relative == "" ? "감시 폴더 · " + Path.GetFileName(result.Source) :
+                "감시 폴더 › " + relative.Replace(Path.DirectorySeparatorChar.ToString(), " › ");
+            previewBackButton.Enabled = relative != "";
+            status.Text = "현재 폴더: 파일 " + result.PreviewFiles + "개, 바로 아래 폴더 " +
+                result.PreviewDirectories + "개" + (result.PreviewFiles > 1000 ?
+                " (파일은 최근 1,000개 표시)" : "") + ". " +
+                (reasonFilter.SelectedIndex > 0 ? "판단 근거 '" + reasonFilter.SelectedItem +
+                "'에 맞는 파일 " + previewRows.Count(row => row.DirectoryPath == null) + "개. " : "") +
+                (result.Folders.Count == 0 ? "정리할 폴더에 하위 폴더가 없어 자동 추천은 없습니다." :
+                "폴더를 두 번 클릭하면 그 안을 볼 수 있습니다.");
+            if (pendingMoveSummary != "")
+            { status.Text = pendingMoveSummary + " " + status.Text; pendingMoveSummary = ""; }
+        }
+
+        internal static bool MatchesReasonFilter(ScanRow row, string criterion)
+        {
+            if (row.DirectoryPath != null || criterion == "전체") return true;
+            string reason = row.Reason ?? "";
+            if (criterion == "폴더명") return reason.StartsWith("폴더명:", StringComparison.Ordinal);
+            if (criterion == "기존 파일") return reason.StartsWith("기존 파일:", StringComparison.Ordinal);
+            if (criterion == "키워드") return reason.IndexOf("키워드", StringComparison.Ordinal) >= 0;
+            if (criterion == "오타 유사") return reason.IndexOf("오타 유사", StringComparison.Ordinal) >= 0;
+            if (criterion == "근거 없음") return reason == "" ||
+                reason.StartsWith("하위 폴더가 없습니다", StringComparison.Ordinal) ||
+                reason.StartsWith("이름과 일치하는 폴더나 기존 파일이 없습니다", StringComparison.Ordinal);
+            return true;
+        }
+
+        private void ApplyReasonFilter(bool updateStatus)
+        {
+            if (list.IsDisposed) return;
+            hoverReasonIndex = -1;
+            SetPreviewToolTip(PreviewListHelp);
+            string criterion = reasonFilter.SelectedItem == null ? "전체" : reasonFilter.SelectedItem.ToString();
+            List<ScanRow> filtered = allPreviewRows.Where(row => MatchesReasonFilter(row, criterion)).ToList();
             list.BeginUpdate();
             try
             {
                 list.SelectedIndices.Clear();
-                previewRows = result.Rows;
+                previewRows = filtered;
                 list.VirtualListSize = previewRows.Count;
                 list.Invalidate();
             }
             finally { list.EndUpdate(); }
-            status.Text = result.Total + "개 파일 중 최근 " + result.Rows.Count +
-                "개를 표시했습니다. " + (result.Folders.Count == 0 ?
-                "정리할 상위 폴더에 하위 폴더가 없어 자동 추천은 없습니다. 목적지에서 상위 폴더를 고르거나 '새 폴더 구조 제안'으로 폴더를 만드세요." :
-                "하위 폴더 " + result.Folders.Count + "개를 비교했습니다.");
+            if (updateStatus)
+                status.Text = "판단 근거: " + criterion + " · 파일 " +
+                    previewRows.Count(row => row.DirectoryPath == null) + "개 표시 (전체 " +
+                    allPreviewRows.Count(row => row.DirectoryPath == null) + "개).";
         }
     }
 }

@@ -355,18 +355,27 @@ namespace DownloadOrganizer
 
     public partial class MainForm : Form
     {
+        private const string PreviewListHelp =
+            "현재 폴더의 파일과 바로 아래 폴더만 보입니다. 판단 근거 칸에 마우스를 올리면 이유가 나옵니다.";
         private TextBox sourceBox = new TextBox(), rootBox = new TextBox();
         private Button sourceButton = new SoftButton(), rootButton = new SoftButton(), scanButton = new SoftButton(), batchButton = new SoftButton(), structureButton = new SoftButton();
         private Button moveButton = new SoftButton(), undoButton = new SoftButton();
         private CheckBox automaticBox = new CheckBox(), startupBox = new CheckBox();
         private ListView list = new ListView();
+        private List<ScanRow> allPreviewRows = new List<ScanRow>();
         private List<ScanRow> previewRows = new List<ScanRow>();
+        private string previewFolder = "";
+        private Button previewBackButton = new SoftButton();
+        private Label previewPathLabel = new Label();
+        private ComboBox reasonFilter = new ComboBox();
         private ComboBox folderBox = new ComboBox();
         private Label status = new Label();
         private Timer timer = new Timer();
         private readonly ToolTip helpTips = new ToolTip {
             InitialDelay = 450, ReshowDelay = 150, AutoPopDelay = 10000, ShowAlways = true
         };
+        private string currentPreviewToolTip = "";
+        private int hoverReasonIndex = -1;
         private Settings settings;
         private History history;
         private ChangeJournal journal;
@@ -453,13 +462,14 @@ namespace DownloadOrganizer
         {
             TableLayoutPanel layout = new TableLayoutPanel();
             layout.Dock = DockStyle.Fill; layout.Padding = new Padding(16);
-            layout.ColumnCount = 3; layout.RowCount = 7;
+            layout.ColumnCount = 3; layout.RowCount = 8;
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 118));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 125));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
@@ -492,7 +502,7 @@ namespace DownloadOrganizer
             FlowLayoutPanel commands = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
             scanButton.Text = "미리보기 새로고침"; scanButton.Width = 150; scanButton.Height = 34;
             ((SoftButton)scanButton).Primary = true;
-            batchButton.Text = "현재 추천 파일 정리"; batchButton.Width = 150; batchButton.Height = 34;
+            batchButton.Text = "확실한 추천만 정리"; batchButton.Width = 160; batchButton.Height = 34;
             batchButton.Click += delegate { BeginBatchMove(); };
             structureButton.Text = "새 폴더 구조 제안"; structureButton.Width = 140; structureButton.Height = 34;
             structureButton.Click += delegate { ShowStructureEditor(); };
@@ -505,9 +515,37 @@ namespace DownloadOrganizer
             scanButton.Click += delegate { BeginPreview(); };
             automaticBox.CheckedChanged += AutomaticChanged;
 
+            TableLayoutPanel previewNavigation = new TableLayoutPanel {
+                Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, Margin = new Padding(0)
+            };
+            previewNavigation.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
+            previewNavigation.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            previewNavigation.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
+            previewNavigation.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+            previewNavigation.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            previewBackButton.Text = "← 상위 폴더"; previewBackButton.Dock = DockStyle.Fill;
+            previewBackButton.Enabled = false;
+            previewBackButton.Click += delegate { PreviewParentFolder(); };
+            previewPathLabel.Text = "감시 폴더"; previewPathLabel.Dock = DockStyle.Fill;
+            previewPathLabel.TextAlign = ContentAlignment.MiddleLeft;
+            previewPathLabel.AutoEllipsis = true;
+            previewPathLabel.Padding = new Padding(12, 0, 0, 0);
+            previewNavigation.Controls.Add(previewBackButton, 0, 0);
+            previewNavigation.Controls.Add(previewPathLabel, 1, 0);
+            previewNavigation.Controls.Add(new Label { Text = "판단 근거", Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleRight }, 2, 0);
+            reasonFilter.DropDownStyle = ComboBoxStyle.DropDownList;
+            reasonFilter.Dock = DockStyle.Fill;
+            reasonFilter.Items.AddRange(new object[] { "전체", "폴더명", "기존 파일", "키워드",
+                "오타 유사", "근거 없음" });
+            reasonFilter.SelectedIndex = 0;
+            reasonFilter.SelectedIndexChanged += delegate { ApplyReasonFilter(true); };
+            previewNavigation.Controls.Add(reasonFilter, 3, 0);
+            layout.Controls.Add(previewNavigation, 0, 3); layout.SetColumnSpan(previewNavigation, 3);
+
             list.Dock = DockStyle.Fill; list.View = View.Details; list.FullRowSelect = true;
             list.HideSelection = false; list.VirtualMode = true;
-            list.Columns.Add("파일", 220); list.Columns.Add("추천 폴더", 190);
+            list.Columns.Add("파일", 220); list.Columns.Add("추천 후보", 190);
             list.Columns.Add("판단 근거", 260); list.Columns.Add("상태", 150);
             list.RetrieveVirtualItem += delegate(object sender, RetrieveVirtualItemEventArgs e)
             {
@@ -515,28 +553,37 @@ namespace DownloadOrganizer
                 { e.Item = new ListViewItem(""); return; }
                 ScanRow row = previewRows[e.ItemIndex];
                 e.Item = new ListViewItem(new string[] { row.Name, row.Folder, row.Reason, row.State });
-                if ((e.ItemIndex & 1) != 0) e.Item.BackColor = Color.FromArgb(249, 251, 254);
+                if (row.DirectoryPath != null)
+                { e.Item.BackColor = Color.FromArgb(236, 245, 255); e.Item.ForeColor = Color.FromArgb(29, 83, 153); }
+                else if ((e.ItemIndex & 1) != 0) e.Item.BackColor = Color.FromArgb(249, 251, 254);
             };
             list.SelectedIndexChanged += delegate { SelectSuggestedFolder(); };
-            layout.Controls.Add(list, 0, 3); layout.SetColumnSpan(list, 3);
+            list.MouseMove += delegate(object sender, MouseEventArgs e) { UpdatePreviewToolTip(e.Location); };
+            list.MouseLeave += delegate { hoverReasonIndex = -1; SetPreviewToolTip(PreviewListHelp); };
+            list.DoubleClick += delegate { OpenSelectedPreviewFolder(); };
+            list.KeyDown += delegate(object sender, KeyEventArgs e) {
+                if (e.KeyCode == Keys.Enter) { OpenSelectedPreviewFolder(); e.Handled = true; }
+                else if (e.KeyCode == Keys.Back) { PreviewParentFolder(); e.Handled = true; }
+            };
+            layout.Controls.Add(list, 0, 4); layout.SetColumnSpan(list, 3);
 
             Label folderLabel = new Label { Text = "선택 파일의 목적지", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
             folderBox.Dock = DockStyle.Fill; folderBox.DropDownStyle = ComboBoxStyle.DropDownList;
-            layout.Controls.Add(folderLabel, 0, 4); layout.Controls.Add(folderBox, 1, 4);
+            layout.Controls.Add(folderLabel, 0, 5); layout.Controls.Add(folderBox, 1, 5);
             moveButton.Text = "선택 파일 이동"; moveButton.Dock = DockStyle.Fill;
             ((SoftButton)moveButton).Primary = true;
             moveButton.Click += delegate { MoveSelected(); };
-            layout.Controls.Add(moveButton, 2, 4);
+            layout.Controls.Add(moveButton, 2, 5);
 
             undoButton.Text = "항목별 되돌리기"; undoButton.Width = 150; undoButton.Height = 34;
             undoButton.Click += delegate { ShowHistory(); };
             Label hint = new Label { Text = "처음에는 미리보기로 확인하세요. 애매한 파일은 자동으로 이동하지 않습니다.", AutoSize = true, ForeColor = SoftUi.Muted, Padding = new Padding(8, 9, 0, 0) };
             FlowLayoutPanel actions = new FlowLayoutPanel { Dock = DockStyle.Fill };
             actions.Controls.Add(undoButton); actions.Controls.Add(hint);
-            layout.Controls.Add(actions, 0, 5); layout.SetColumnSpan(actions, 3);
+            layout.Controls.Add(actions, 0, 6); layout.SetColumnSpan(actions, 3);
             status.Text = "폴더를 선택하고 미리보기를 누르세요.";
             status.Dock = DockStyle.Fill; status.TextAlign = ContentAlignment.MiddleLeft;
-            layout.Controls.Add(status, 0, 6); layout.SetColumnSpan(status, 3);
+            layout.Controls.Add(status, 0, 7); layout.SetColumnSpan(status, 3);
 
             helpTips.SetToolTip(sourceLabel, "새 파일을 확인할 폴더입니다. 보통 다운로드 폴더를 선택합니다.");
             helpTips.SetToolTip(sourceBox, "새 파일을 확인할 폴더 경로입니다.");
@@ -546,15 +593,71 @@ namespace DownloadOrganizer
             helpTips.SetToolTip(sameFolderButton, "선택한 폴더와 그 하위 폴더의 파일을 같은 구조 안에서 정리합니다.");
             helpTips.SetToolTip(rootButton, "정리된 파일을 보관할 상위 폴더를 선택합니다.");
             helpTips.SetToolTip(scanButton, "현재 파일의 추천 폴더를 다시 표시합니다. 파일은 옮기지 않습니다.");
-            helpTips.SetToolTip(batchButton, "현재 파일 중 추천이 확실한 파일을 한 번에 옮깁니다. 감시 폴더의 하위 폴더 안 파일은 옮기지 않습니다. 한 폴더 방식에서는 하위 폴더의 파일도 포함합니다.");
+            helpTips.SetToolTip(previewBackButton, "현재 미리보기의 한 단계 위 폴더로 돌아갑니다.");
+            helpTips.SetToolTip(previewPathLabel, "지금 보고 있는 감시 폴더의 위치입니다. 폴더를 두 번 클릭하면 안으로 들어갑니다.");
+            helpTips.SetToolTip(reasonFilter,
+                "폴더명: 파일명과 폴더 이름이 비슷할 때\n" +
+                "기존 파일: 그 폴더에 있던 파일명과 더 비슷할 때\n" +
+                "키워드: 파일명 단어가 폴더 경로나 기존 파일명에 나올 때\n" +
+                "오타 유사: 폴더 이름과 1~2글자 차이의 후보가 있을 때\n" +
+                "근거 없음: 이름이나 단어로 연결할 폴더를 찾지 못했을 때\n" +
+                "필터는 화면 표시만 바꿉니다. 하위 폴더 줄은 계속 보입니다.");
+            helpTips.SetToolTip(batchButton, "선택 여부와 관계없이 추천이 확실한 파일만 옮깁니다. '후보 폴더가 비슷함' 파일은 아래에서 목적지를 골라 직접 이동하세요.");
             helpTips.SetToolTip(structureButton, "현재 폴더와 추천 구조를 나란히 보고 수정합니다.");
             helpTips.SetToolTip(automaticBox, "새로 받은 파일을 확인해 추천이 확실하면 자동으로 옮깁니다. 감시 폴더의 하위 폴더 안 파일은 옮기지 않습니다. 한 폴더 방식에서는 하위 폴더의 새 파일도 확인합니다.");
             helpTips.SetToolTip(startupBox, "Windows에 로그인할 때 이 프로그램을 자동으로 실행합니다.");
-            helpTips.SetToolTip(list, "파일을 선택하면 아래에서 목적지 폴더를 바꿀 수 있습니다.");
+            SetPreviewToolTip(PreviewListHelp);
             helpTips.SetToolTip(folderLabel, "선택한 파일을 옮길 폴더입니다.");
             helpTips.SetToolTip(folderBox, "선택한 파일의 목적지 폴더를 고릅니다.");
-            helpTips.SetToolTip(moveButton, "선택한 파일을 지정한 폴더로 옮깁니다.");
+            helpTips.SetToolTip(moveButton, "선택한 파일을 모두 지정한 폴더로 옮깁니다. 여러 파일은 이동 전에 다시 확인합니다.");
             helpTips.SetToolTip(undoButton, "파일·폴더별 변경 이력을 보고 원하는 항목을 되돌립니다.");
+        }
+
+        private void SetPreviewToolTip(string message)
+        {
+            if (message == currentPreviewToolTip) return;
+            if (list.IsHandleCreated) helpTips.Hide(list);
+            helpTips.SetToolTip(list, message);
+            currentPreviewToolTip = message;
+        }
+
+        private void UpdatePreviewToolTip(Point location)
+        {
+            ListViewHitTestInfo hit = list.HitTest(location);
+            if (hit.Item == null || hit.SubItem == null || hit.Item.SubItems.Count <= 2 ||
+                hit.SubItem != hit.Item.SubItems[2] || hit.Item.Index < 0 ||
+                hit.Item.Index >= previewRows.Count)
+            { hoverReasonIndex = -1; SetPreviewToolTip(PreviewListHelp); return; }
+            if (hoverReasonIndex == hit.Item.Index) return;
+            hoverReasonIndex = hit.Item.Index;
+            ScanRow row = previewRows[hit.Item.Index];
+            SetPreviewToolTip(row.DirectoryPath == null ? ExplainJudgmentReason(row) : PreviewListHelp);
+        }
+
+        private static string ExplainJudgmentReason(ScanRow row)
+        {
+            string reason = row.Reason ?? "";
+            StringBuilder explanation = new StringBuilder();
+            explanation.AppendLine("판단 근거: " + (reason == "" ? "없음" : reason));
+            if (reason.StartsWith("폴더명:", StringComparison.Ordinal))
+                explanation.AppendLine("파일 이름과 폴더 이름의 단어가 비슷하고, 이 근거가 기존 파일명과 같거나 더 강할 때 표시됩니다.");
+            else if (reason.StartsWith("기존 파일:", StringComparison.Ordinal))
+                explanation.AppendLine("그 폴더에 이미 있는 파일의 이름이 폴더 이름보다 더 강한 단서일 때 표시됩니다.");
+            else if (reason.StartsWith("키워드 후보:", StringComparison.Ordinal))
+                explanation.AppendLine("파일명과 직접 비슷한 이름은 없지만, 폴더 경로나 기존 파일명의 단어가 검색되어 후보가 됐습니다.");
+            else if (reason.StartsWith("오타 유사 후보:", StringComparison.Ordinal))
+                explanation.AppendLine("파일명 단어와 폴더명 단어의 첫 글자가 같고 1~2글자 차이가 나 후보가 됐습니다.");
+            else if (reason.StartsWith("하위 폴더가 없습니다", StringComparison.Ordinal))
+                explanation.AppendLine("정리할 상위 폴더 아래에 비교할 하위 폴더가 없을 때 표시됩니다.");
+            else if (reason.StartsWith("이름과 일치하는 폴더나 기존 파일이 없습니다", StringComparison.Ordinal))
+                explanation.AppendLine("파일명과 연결할 폴더명·기존 파일명·키워드를 찾지 못했을 때 표시됩니다.");
+            if (reason.IndexOf("/ 키워드:", StringComparison.Ordinal) >= 0)
+                explanation.AppendLine("키워드는 파일명 단어가 폴더 경로나 기존 파일명에도 나와 검색 순위에 반영됐다는 뜻입니다.");
+            if (row.State == "후보 폴더가 비슷함")
+                explanation.AppendLine("상위 후보들의 점수 차이가 작아 자동 이동은 보류했습니다.");
+            else if (row.State == "이름 일치가 약함")
+                explanation.AppendLine("이름 유사도가 자동 이동 기준에 못 미쳐 보류했습니다.");
+            return explanation.ToString().TrimEnd();
         }
 
         private void ChooseFolder(TextBox box)
@@ -582,6 +685,7 @@ namespace DownloadOrganizer
             settings.Seen.Clear();
             observations.Clear();
             indexedRoot = "";
+            previewFolder = "";
         }
 
         private bool IsStartupEnabled()
@@ -676,15 +780,62 @@ namespace DownloadOrganizer
 
         private void SelectSuggestedFolder()
         {
-            if (list.SelectedIndices.Count == 0) return;
+            int count = list.SelectedIndices.Count;
+            moveButton.Text = count > 1 ? "선택 " + count + "개 이동" : "선택 파일 이동";
+            if (count == 0) return;
+            List<ScanRow> selected = list.SelectedIndices.Cast<int>()
+                .Where(index => index >= 0 && index < previewRows.Count)
+                .Select(index => previewRows[index]).ToList();
+            if (selected.Count == 0) return;
+            if (selected.Any(row => row.DirectoryPath != null))
+            {
+                folderBox.SelectedIndex = -1;
+                status.Text = "폴더는 두 번 클릭해 안의 파일을 확인하세요.";
+                return;
+            }
+            string destination = selected[0].Suggestion.Folder;
+            folderBox.SelectedIndex = -1;
+            if (destination != "" && selected.All(row => String.Equals(row.Suggestion.Folder,
+                destination, StringComparison.OrdinalIgnoreCase)))
+                for (int i = 1; i < folderBox.Items.Count; i++)
+                    if (String.Equals(((FolderChoice)folderBox.Items[i]).Path, destination,
+                        StringComparison.OrdinalIgnoreCase))
+                    { folderBox.SelectedIndex = i; break; }
+            if (selected.Any(row => row.State == "후보 폴더가 비슷함"))
+                status.Text = "후보 폴더가 비슷해 자동으로는 옮기지 않습니다. 아래 목적지를 확인하고 '" +
+                    moveButton.Text + "'을 누르세요.";
+            else if (folderBox.SelectedIndex < 0)
+                status.Text = "공통 추천 폴더가 없습니다. 아래에서 옮길 폴더를 직접 고르세요.";
+        }
+
+        private void OpenSelectedPreviewFolder()
+        {
+            if (list.SelectedIndices.Count != 1) return;
             int index = list.SelectedIndices[0];
             if (index < 0 || index >= previewRows.Count) return;
-            Suggestion suggestion = previewRows[index].Suggestion;
-            folderBox.SelectedIndex = -1;
-            for (int i = 1; i < folderBox.Items.Count; i++)
-                if (((FolderChoice)folderBox.Items[i]).Path == suggestion.Folder)
-                { folderBox.SelectedIndex = i; return; }
-            status.Text = previewRows[index].Name + ": 추천 폴더가 없습니다. '선택 파일의 목적지'에서 옮길 폴더를 직접 고르세요.";
+            string folder = previewRows[index].DirectoryPath;
+            if (folder != null) NavigatePreviewFolder(folder);
+        }
+
+        private void PreviewParentFolder()
+        {
+            string source;
+            try { source = Engine.Full(sourceBox.Text.Trim()); }
+            catch { return; }
+            string current = previewFolder == "" ? source : previewFolder;
+            if (current.Equals(source, StringComparison.OrdinalIgnoreCase)) return;
+            NavigatePreviewFolder(Path.GetDirectoryName(current));
+        }
+
+        private void NavigatePreviewFolder(string folder)
+        {
+            string source;
+            try { source = Engine.Full(sourceBox.Text.Trim()); }
+            catch { return; }
+            if (folder == null || !Engine.SameOrInside(folder, source) || !Directory.Exists(folder))
+            { status.Text = "미리볼 폴더를 찾을 수 없습니다."; return; }
+            previewFolder = Engine.Full(folder);
+            BeginPreview();
         }
 
         private void AutomaticChanged(object sender, EventArgs e)
@@ -702,7 +853,7 @@ namespace DownloadOrganizer
             {
                 settings.AutoStartedAtTicks = DateTime.UtcNow.Ticks;
                 settings.AutomaticStartedBefore = true;
-                status.Text = "자동 이동을 시작했습니다. 기존 파일은 '현재 추천 파일 정리'에서 정리하세요.";
+                status.Text = "자동 이동을 시작했습니다. 기존 파일은 '확실한 추천만 정리'에서 정리하세요.";
             }
             else status.Text = "자동 이동을 시작했습니다.";
             Save();
@@ -798,21 +949,29 @@ namespace DownloadOrganizer
 
         private void MoveSelected()
         {
+            if (list.SelectedIndices.Cast<int>().Any(index => index >= 0 &&
+                index < previewRows.Count && previewRows[index].DirectoryPath != null))
+            { status.Text = "폴더는 두 번 클릭해 안의 파일을 확인하세요. 이동할 파일만 선택해 주세요."; return; }
             if (list.SelectedIndices.Count == 0 || !(folderBox.SelectedItem is FolderChoice))
             { status.Text = "파일과 목적지 폴더를 선택하세요."; return; }
-            int index = list.SelectedIndices[0];
-            if (index < 0 || index >= previewRows.Count) return;
+            List<string> selectedSources = list.SelectedIndices.Cast<int>()
+                .Where(index => index >= 0 && index < previewRows.Count)
+                .Select(index => previewRows[index].Suggestion.File).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (selectedSources.Count == 0) return;
             string selectedPath = ((FolderChoice)folderBox.SelectedItem).Path;
             if (!indexedRoot.Equals(Engine.Full(rootBox.Text.Trim()), StringComparison.OrdinalIgnoreCase))
             { status.Text = "먼저 미리보기를 새로고침하세요."; BeginPreview(); return; }
-            Suggestion suggestion = previewRows[index].Suggestion;
             FolderChoice selected = selectedPath.Equals(indexedRoot, StringComparison.OrdinalIgnoreCase) ?
                 (FolderChoice)folderBox.SelectedItem : folders.FirstOrDefault(f => f.Path == selectedPath);
             if (selected == null) { status.Text = "선택한 목적지 폴더를 찾을 수 없습니다."; return; }
-            if (Engine.Full(Path.GetDirectoryName(suggestion.File)).Equals(Engine.Full(selected.Path),
-                StringComparison.OrdinalIgnoreCase))
+            if (selectedSources.Count == 1 && Engine.Full(Path.GetDirectoryName(selectedSources[0]))
+                .Equals(Engine.Full(selected.Path), StringComparison.OrdinalIgnoreCase))
             { status.Text = "파일이 이미 선택한 폴더에 있습니다."; return; }
-            BeginSelectedMove(suggestion.File, selected.Path, selected.Label);
+            if (selectedSources.Count > 1 && MessageBox.Show(this,
+                selectedSources.Count + "개 파일을 '" + selected.Label + "' 폴더로 옮길까요?\n" +
+                "이미 해당 폴더에 있는 파일은 건너뜁니다.", "선택 파일 이동",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            BeginSelectedMoves(selectedSources, selected.Path, selected.Label);
         }
 
         private void Undo()
@@ -912,7 +1071,18 @@ namespace DownloadOrganizer
                 if (error != "") { status.Text = error; return; }
                 using (StructureEditor editor = new StructureEditor(source, root))
                 {
-                    if (editor.ShowDialog(this) == DialogResult.OK)
+                    DialogResult editorResult = editor.ShowDialog(this);
+                    bool selectedPathsChanged = !editor.SelectedSource.Equals(Engine.Full(source),
+                        StringComparison.OrdinalIgnoreCase) ||
+                        !editor.SelectedRoot.Equals(Engine.Full(root), StringComparison.OrdinalIgnoreCase);
+                    if (selectedPathsChanged)
+                    {
+                        sourceBox.Text = editor.SelectedSource;
+                        rootBox.Text = editor.SelectedRoot;
+                        indexedRoot = "";
+                        Save();
+                    }
+                    if (editorResult == DialogResult.OK)
                     {
                         string historyWarning = "";
                         if (editor.AppliedPlan != null)
@@ -924,9 +1094,10 @@ namespace DownloadOrganizer
                             }
                             catch (Exception ex) { historyWarning = " 변경 이력 저장 실패: " + ex.Message; }
                         }
-                        bool sameFolder = Engine.Full(source).Equals(Engine.Full(root), StringComparison.OrdinalIgnoreCase);
+                        bool sameFolder = editor.SelectedSource.Equals(editor.SelectedRoot,
+                            StringComparison.OrdinalIgnoreCase);
                         if (editor.AppliedRoot != null &&
-                            !editor.AppliedRoot.Equals(Engine.Full(root), StringComparison.OrdinalIgnoreCase))
+                            !editor.AppliedRoot.Equals(editor.SelectedRoot, StringComparison.OrdinalIgnoreCase))
                         {
                             updatingRootAfterRename = true;
                             try
@@ -956,6 +1127,11 @@ namespace DownloadOrganizer
                         indexedRoot = "";
                         BeginPreview();
                         status.Text = editor.ResultMessage + historyWarning;
+                    }
+                    else if (selectedPathsChanged)
+                    {
+                        BeginPreview();
+                        status.Text = "감시·정리 폴더 경로를 바꿨습니다. 자동 이동은 다시 켜 주세요.";
                     }
                 }
             }

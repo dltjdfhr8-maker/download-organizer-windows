@@ -6,6 +6,7 @@ $sources = @(
     'DownloadOrganizer.cs', 'DesktopInstance.cs', 'MainForm.Async.cs', 'MainForm.Tray.cs',
     'StructurePlanner.cs', 'StructureEditor.cs', 'StructureEditor.Visual.cs',
     'StructureEditor.Drag.cs', 'StructureEditor.Selection.cs', 'StructureEditor.Rename.cs',
+    'StructureEditor.Clipboard.cs',
     'SoftUi.cs', 'DragGhost.cs', 'LocalSearchIndex.cs', 'ChangeJournal.cs', 'HistoryForm.cs',
     'TopicSuggester.cs', 'TopicSuggestionForm.cs'
 ) | ForEach-Object { Join-Path $PSScriptRoot $_ }
@@ -16,6 +17,10 @@ $checks = @(
     @{ Source = 'MainForm.Async.Smoke.cs'; Main = 'DownloadOrganizer.AsyncSmoke' },
     @{ Source = 'MainForm.Burst.Smoke.cs'; Main = 'DownloadOrganizer.BurstSmoke' },
     @{ Source = 'StructureEditor.Smoke.cs'; Main = 'DownloadOrganizer.StructureSmoke' },
+    @{ Source = 'StructurePlanner.Copy.Smoke.cs'; Main = 'DownloadOrganizer.CopySmoke' },
+    @{ Source = 'MainForm.MultiMove.Smoke.cs'; Main = 'DownloadOrganizer.MultiMoveSmoke' },
+    @{ Source = 'MainForm.PreviewDepth.Smoke.cs'; Main = 'DownloadOrganizer.PreviewDepthSmoke' },
+    @{ Source = 'ChangeJournal.BatchUndo.Smoke.cs'; Main = 'DownloadOrganizer.BatchUndoSmoke' },
     @{ Source = 'FolderRename.Smoke.cs'; Main = 'DownloadOrganizer.FolderRenameSmoke' },
     @{ Source = 'SingleFolder.Smoke.cs'; Main = 'DownloadOrganizer.SingleFolderSmoke' },
     @{ Source = 'SingleFolderWatcher.Smoke.cs'; Main = 'DownloadOrganizer.SingleFolderWatcherSmoke' },

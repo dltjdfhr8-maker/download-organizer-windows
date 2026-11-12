@@ -14,6 +14,7 @@ namespace DownloadOrganizer
         public long LastWriteTicks;
         public long CreationTicks;
         public bool FromDownloads;
+        public bool IsCopy;
         internal string Stage = "";
     }
 
@@ -26,11 +27,12 @@ namespace DownloadOrganizer
     public class ApplySummary
     {
         public int FilesMoved;
+        public int FilesCopied;
         public int FoldersCreated;
         public int FoldersRemoved;
         public override string ToString()
         {
-            return "파일 " + FilesMoved + "개 변경, 폴더 " + FoldersCreated +
+            return "파일 " + FilesMoved + "개 이동, " + FilesCopied + "개 복사, 폴더 " + FoldersCreated +
                 "개 생성, 빈 폴더 " + FoldersRemoved + "개 정리";
         }
     }
@@ -121,7 +123,8 @@ namespace DownloadOrganizer
                 Source = RemapRoot(file.Source, root, newRoot),
                 Destination = RemapRoot(file.Destination, root, newRoot),
                 Length = file.Length, LastWriteTicks = file.LastWriteTicks,
-                CreationTicks = file.CreationTicks, FromDownloads = file.FromDownloads
+                CreationTicks = file.CreationTicks, FromDownloads = file.FromDownloads,
+                IsCopy = file.IsCopy
             }).ToList();
             List<string> renamedDirectories = desiredDirectories.Select(directory =>
                 RemapRoot(directory, root, newRoot)).ToList();
@@ -180,8 +183,11 @@ namespace DownloadOrganizer
             foreach (PlannedFile file in files)
             {
                 string original = Engine.Full(file.Source), final = Engine.Full(file.Destination);
-                if (!allSources.Add(original)) throw new IOException("같은 파일이 오른쪽 구조에 두 번 들어 있습니다: " + original);
+                if (!file.IsCopy && !allSources.Add(original))
+                    throw new IOException("같은 원본 파일이 오른쪽 구조에 두 번 들어 있습니다: " + original);
                 if (!destinations.Add(final)) throw new IOException("같은 목적지에 파일 두 개를 둘 수 없습니다: " + final);
+                if (file.IsCopy && Same(original, final))
+                    throw new IOException("원본 파일과 같은 위치에 복사할 수 없습니다: " + final);
                 if (!File.Exists(original)) throw new IOException("파일이 없어졌습니다. 창을 다시 열어 확인하세요: " + original);
                 FileInfo info = new FileInfo(original);
                 if (info.Length != file.Length || info.LastWriteTimeUtc.Ticks != file.LastWriteTicks)
@@ -195,6 +201,8 @@ namespace DownloadOrganizer
                 }
                 else if (!snapshot.TargetFiles.Contains(original))
                     throw new IOException("정리 폴더에 없던 파일이 포함되었습니다.");
+                if (file.IsCopy && !Engine.SameOrInside(final, root))
+                    throw new IOException("복사본은 정리 폴더 안에만 둘 수 있습니다.");
                 if (!file.FromDownloads && !Engine.SameOrInside(final, root))
                     throw new IOException("정리 폴더의 파일을 외부로 옮길 수 없습니다.");
                 if (file.FromDownloads && !Same(original, final) &&
@@ -204,7 +212,8 @@ namespace DownloadOrganizer
                 if (Directory.Exists(final)) throw new IOException("파일 목적지에 이미 폴더가 있습니다: " + final);
             }
             HashSet<string> plannedTargetSources = new HashSet<string>(
-                files.Where(f => sameFolder || !f.FromDownloads).Select(f => Engine.Full(f.Source)),
+                files.Where(f => !f.IsCopy && (sameFolder || !f.FromDownloads))
+                    .Select(f => Engine.Full(f.Source)),
                 StringComparer.OrdinalIgnoreCase);
             HashSet<string> expectedTargetSources = new HashSet<string>(snapshot.TargetFiles,
                 StringComparer.OrdinalIgnoreCase);
@@ -214,7 +223,7 @@ namespace DownloadOrganizer
                     Engine.SourceFiles(source).Select(f => Engine.Full(f.FullName)),
                     StringComparer.OrdinalIgnoreCase);
                 HashSet<string> plannedTopLevelFiles = new HashSet<string>(
-                    files.Where(f => f.FromDownloads).Select(f => Engine.Full(f.Source)),
+                    files.Where(f => f.FromDownloads && !f.IsCopy).Select(f => Engine.Full(f.Source)),
                     StringComparer.OrdinalIgnoreCase);
                 if (!plannedTopLevelFiles.SetEquals(topLevelFiles))
                     throw new IOException("최상위 파일이 편집 중 바뀌었습니다. 창을 다시 열어 확인하세요.");
@@ -227,7 +236,7 @@ namespace DownloadOrganizer
                     Engine.SourceFiles(source, true).Select(f => Engine.Full(f.FullName)),
                     StringComparer.OrdinalIgnoreCase);
                 HashSet<string> plannedSourceFiles = new HashSet<string>(
-                    files.Where(f => f.FromDownloads).Select(f => Engine.Full(f.Source)),
+                    files.Where(f => f.FromDownloads && !f.IsCopy).Select(f => Engine.Full(f.Source)),
                     StringComparer.OrdinalIgnoreCase);
                 if (!plannedSourceFiles.SetEquals(currentSourceFiles))
                     throw new IOException("감시 폴더의 파일이 편집 중 바뀌었습니다. 창을 다시 열어 확인하세요.");
@@ -238,24 +247,32 @@ namespace DownloadOrganizer
                 if (File.Exists(final) && !allSources.Contains(final))
                     throw new IOException("목적지에 다른 파일이 있습니다: " + final);
 
-            List<PlannedFile> moving = files.Where(f => !Same(f.Source, f.Destination)).ToList();
+            List<PlannedFile> copying = files.Where(f => f.IsCopy).ToList();
+            List<PlannedFile> moving = files.Where(f => !f.IsCopy && !Same(f.Source, f.Destination)).ToList();
+            List<PlannedFile> operations = copying.Concat(moving).ToList();
             List<string> created = new List<string>();
             List<string> removed = new List<string>();
-            if (moving.Count == 0 && desired.SetEquals(snapshot.TargetDirectories))
+            if (operations.Count == 0 && desired.SetEquals(snapshot.TargetDirectories))
                 return new ApplySummary();
 
             string stageDirectory = Path.Combine(root, StagePrefix + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(stageDirectory);
             string manifest = Path.Combine(stageDirectory, "recovery.tsv");
-            for (int i = 0; i < moving.Count; i++)
-                moving[i].Stage = Path.Combine(stageDirectory, i.ToString("D6") + ".stage");
-            File.WriteAllLines(manifest, moving.Select(f => f.Source + "\t" + f.Stage + "\t" +
-                f.Destination + "\t" + f.Length + "\t" + f.LastWriteTicks).ToArray(), Encoding.UTF8);
+            for (int i = 0; i < operations.Count; i++)
+                operations[i].Stage = Path.Combine(stageDirectory, i.ToString("D6") + ".stage");
+            File.WriteAllLines(manifest, operations.Select(f => f.Source + "\t" + f.Stage + "\t" +
+                f.Destination + "\t" + f.Length + "\t" + f.LastWriteTicks + "\t" +
+                (f.IsCopy ? "C" : "M")).ToArray(), Encoding.UTF8);
             try
             {
+                foreach (PlannedFile file in copying)
+                {
+                    if (progress != null) progress(0, operations.Count, file.Source, "복사 준비 중");
+                    File.Copy(file.Source, file.Stage);
+                }
                 foreach (PlannedFile file in moving)
                 {
-                    if (progress != null) progress(0, moving.Count, file.Source, "이동 준비 중");
+                    if (progress != null) progress(0, operations.Count, file.Source, "이동 준비 중");
                     File.Move(file.Source, file.Stage);
                 }
                 foreach (string directory in desired.OrderBy(Depth))
@@ -267,16 +284,18 @@ namespace DownloadOrganizer
                         created.Add(directory);
                     }
                 }
-                for (int i = 0; i < moving.Count; i++)
+                for (int i = 0; i < operations.Count; i++)
                 {
-                    PlannedFile file = moving[i];
+                    PlannedFile file = operations[i];
                     if (File.Exists(file.Destination)) throw new IOException("목적지에 파일이 생겼습니다: " + file.Destination);
-                    if (progress != null) progress(i, moving.Count, file.Source, "이동 중");
+                    if (progress != null) progress(i, operations.Count, file.Source,
+                        file.IsCopy ? "복사 중" : "이동 중");
                     File.Move(file.Stage, file.Destination);
-                    if (progress != null) progress(i + 1, moving.Count, file.Source, "이동 완료");
+                    if (progress != null) progress(i + 1, operations.Count, file.Source,
+                        file.IsCopy ? "복사 완료" : "이동 완료");
                 }
-                if (progress != null && moving.Count > 0)
-                    progress(moving.Count, moving.Count, "", "폴더 정리 중");
+                if (progress != null && operations.Count > 0)
+                    progress(operations.Count, operations.Count, "", "폴더 정리 중");
                 foreach (string directory in snapshot.TargetDirectories.OrderByDescending(Depth))
                 {
                     if (desired.Contains(directory) || !Directory.Exists(directory)) continue;
@@ -287,13 +306,29 @@ namespace DownloadOrganizer
                 }
                 File.Delete(manifest);
                 Directory.Delete(stageDirectory);
-                return new ApplySummary { FilesMoved = moving.Count, FoldersCreated = created.Count, FoldersRemoved = removed.Count };
+                return new ApplySummary { FilesMoved = moving.Count, FilesCopied = copying.Count,
+                    FoldersCreated = created.Count, FoldersRemoved = removed.Count };
             }
             catch (Exception applyError)
             {
                 List<string> recoveryErrors = new List<string>();
                 foreach (string directory in removed.OrderBy(Depth))
                     try { Directory.CreateDirectory(directory); } catch (Exception ex) { recoveryErrors.Add(ex.Message); }
+                foreach (PlannedFile file in copying)
+                {
+                    try
+                    {
+                        string present = File.Exists(file.Destination) && !File.Exists(file.Stage) ?
+                            file.Destination : file.Stage;
+                        if (File.Exists(present))
+                        {
+                            CheckRecoveryFile(present, new[] { file.Source, file.Stage, file.Destination,
+                                file.Length.ToString(), file.LastWriteTicks.ToString(), "C" });
+                            File.Delete(present);
+                        }
+                    }
+                    catch (Exception ex) { recoveryErrors.Add(ex.Message); }
+                }
                 foreach (PlannedFile file in moving)
                 {
                     try
@@ -335,8 +370,18 @@ namespace DownloadOrganizer
             if (!File.Exists(manifest)) throw new IOException("복구 기록이 없습니다: " + stageDirectory);
             List<string[]> rows = File.ReadAllLines(manifest, Encoding.UTF8)
                 .Where(x => !String.IsNullOrWhiteSpace(x)).Select(x => x.Split('\t')).ToList();
-            if (rows.Any(x => x.Length != 5)) throw new IOException("복구 기록 형식이 올바르지 않습니다.");
-            foreach (string[] row in rows)
+            if (rows.Any(x => x.Length != 5 && (x.Length != 6 || (x[5] != "C" && x[5] != "M"))))
+                throw new IOException("복구 기록 형식이 올바르지 않습니다.");
+            foreach (string[] row in rows.Where(x => x.Length == 6 && x[5] == "C"))
+            {
+                if (File.Exists(row[1]) && File.Exists(row[2]))
+                    throw new IOException("복사본이 임시 위치와 목적지에 모두 있어 자동 복구를 멈췄습니다: " + row[2]);
+                string present = File.Exists(row[2]) ? row[2] : row[1];
+                if (!File.Exists(present)) continue;
+                CheckRecoveryFile(present, row);
+                File.Delete(present);
+            }
+            foreach (string[] row in rows.Where(x => x.Length == 5 || x[5] == "M"))
             {
                 if (File.Exists(row[2]) && !File.Exists(row[1]))
                 {
@@ -344,7 +389,7 @@ namespace DownloadOrganizer
                     File.Move(row[2], row[1]);
                 }
             }
-            foreach (string[] row in rows)
+            foreach (string[] row in rows.Where(x => x.Length == 5 || x[5] == "M"))
             {
                 if (!File.Exists(row[1])) continue;
                 CheckRecoveryFile(row[1], row);

@@ -182,10 +182,10 @@ namespace DownloadOrganizer
     // One of the two "from → to" folder cards at the top of the structure editor.
     internal sealed class LocationCard : Control
     {
-        private readonly Font captionFont = new Font("Malgun Gothic", 9F);
-        private readonly Font titleFont = new Font("Malgun Gothic", 15F, FontStyle.Bold);
-        private readonly Font pathFont = new Font("Malgun Gothic", 8.5F);
-        private readonly Font badgeFont = new Font("Malgun Gothic", 8.5F, FontStyle.Bold);
+        private readonly Font captionFont = new Font("Malgun Gothic", 8F);
+        private readonly Font titleFont = new Font("Malgun Gothic", 12F, FontStyle.Bold);
+        private readonly Font pathFont = new Font("Malgun Gothic", 7.5F);
+        private readonly Font badgeFont = new Font("Malgun Gothic", 8F, FontStyle.Bold);
         private string caption = "", title = "", path = "", badge = "";
         private readonly bool green;
 
@@ -204,6 +204,7 @@ namespace DownloadOrganizer
         }
 
         internal string TitleText { get { return title; } }
+        internal string PathText { get { return path; } }
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -211,24 +212,24 @@ namespace DownloadOrganizer
             SoftDraw.Card(g, ClientRectangle, SoftUi.EffectiveBack(Parent));
             g.SmoothingMode = SmoothingMode.AntiAlias;
             Color tile = green ? SoftDraw.GreenSoft : SoftUi.AccentSoft;
-            Rectangle icon = new Rectangle(18, (Height - 4 - 52) / 2, 52, 52);
-            using (GraphicsPath tilePath = SoftDraw.Round(icon, 14))
+            Rectangle icon = new Rectangle(12, (Height - 4 - 38) / 2, 38, 38);
+            using (GraphicsPath tilePath = SoftDraw.Round(icon, 10))
             using (SolidBrush brush = new SolidBrush(tile))
                 g.FillPath(brush, tilePath);
-            SoftDraw.FolderGlyph(g, Rectangle.Inflate(icon, -13, -13),
+            SoftDraw.FolderGlyph(g, Rectangle.Inflate(icon, -9, -9),
                 green ? SoftDraw.Green : Color.FromArgb(76, 132, 222),
                 green ? Color.FromArgb(118, 196, 150) : Color.FromArgb(146, 183, 240));
-            int left = icon.Right + 16;
+            int left = icon.Right + 12;
             int badgeWidth = badge == "" ? 0 : SoftDraw.PillWidth(badge, badgeFont);
-            int right = Width - 20 - badgeWidth - 10;
+            int right = Width - 14 - badgeWidth - 8;
             TextFormatFlags flags = TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis |
                 TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding;
-            TextRenderer.DrawText(g, caption, captionFont, new Rectangle(left, 14, right - left, 20), SoftUi.Muted, flags);
-            TextRenderer.DrawText(g, title, titleFont, new Rectangle(left, 34, right - left, 32), SoftUi.Text, flags);
-            TextRenderer.DrawText(g, path, pathFont, new Rectangle(left, 68, Width - 20 - left, 18),
+            TextRenderer.DrawText(g, caption, captionFont, new Rectangle(left, 7, right - left, 16), SoftUi.Muted, flags);
+            TextRenderer.DrawText(g, title, titleFont, new Rectangle(left, 22, right - left, 25), SoftUi.Text, flags);
+            TextRenderer.DrawText(g, path, pathFont, new Rectangle(left, 48, Width - 14 - left, 16),
                 Color.FromArgb(130, 144, 163), flags | TextFormatFlags.PathEllipsis);
             if (badge != "")
-                SoftDraw.Pill(g, new Rectangle(Width - 20 - badgeWidth, 16, badgeWidth, 24), badge, badgeFont,
+                SoftDraw.Pill(g, new Rectangle(Width - 14 - badgeWidth, 9, badgeWidth, 22), badge, badgeFont,
                     green ? SoftDraw.GreenSoft : SoftUi.AccentSoft, green ? SoftDraw.GreenInk : SoftDraw.BlueInk);
         }
 

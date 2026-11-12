@@ -16,6 +16,7 @@ namespace DownloadOrganizer
         public PlanKind Kind;
         public string OriginalPath = "";
         public bool FromDownloads;
+        public bool IsCopy;
         public long Length;
         public long LastWriteTicks;
         public long CreationTicks;
@@ -57,8 +58,8 @@ namespace DownloadOrganizer
 
     public partial class StructureEditor : Form
     {
-        private readonly string source;
-        private readonly string root;
+        private string source;
+        private string root;
         private readonly string topicsFile;
         private StructureSnapshot snapshot;
         private HashSet<string> downloadFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -79,6 +80,8 @@ namespace DownloadOrganizer
         public bool Loaded { get; private set; }
         public string ResultMessage { get; private set; }
         internal string AppliedRoot { get; private set; }
+        internal string SelectedSource { get { return source; } }
+        internal string SelectedRoot { get { return root; } }
         internal PlanData AppliedPlan { get; private set; }
         internal StructureSnapshot PreviousSnapshot { get; private set; }
 
@@ -185,38 +188,56 @@ namespace DownloadOrganizer
 
         private void BuildUi()
         {
-            TableLayoutPanel layout = Rows(70, 110, 112, -1, 160, 26);
-            layout.Padding = new Padding(28, 16, 28, 8);
+            TableLayoutPanel layout = Rows(30, 74, 44, 0, -1, 112, 24);
+            layout.Padding = new Padding(20, 8, 20, 4);
             Controls.Add(layout);
             Controls.Add(new AppHeader("폴더 구조 편집"));
 
-            TableLayoutPanel heading = Rows(40, 26);
-            heading.Controls.Add(TextLabel("어디를 정리하는지 먼저 확인하세요", 17F, FontStyle.Bold, SoftUi.Text), 0, 0);
-            heading.Controls.Add(TextLabel("왼쪽은 지금 상태, 오른쪽은 적용 후 모습입니다. '변경 내용 확인·적용'을 누르기 전에는 실제 파일이 바뀌지 않아요.",
-                9.5F, FontStyle.Regular, SoftUi.Muted), 0, 1);
+            TableLayoutPanel heading = Rows(-1);
+            heading.Controls.Add(TextLabel("정리할 위치 확인", 11.5F, FontStyle.Bold, SoftUi.Text), 0, 0);
             layout.Controls.Add(heading, 0, 0);
 
             TableLayoutPanel places = new TableLayoutPanel {
-                Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = new Padding(0, 0, 0, 12)
+                Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = new Padding(0, 0, 0, 6)
             };
             places.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             places.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
             places.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             places.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             sourceCard.Dock = DockStyle.Fill; targetCard.Dock = DockStyle.Fill;
+            sourceCard.Cursor = Cursors.Hand; targetCard.Cursor = Cursors.Hand;
+            sourceCard.Click += delegate { BrowseStructureFolder(true); };
+            targetCard.Click += delegate { BrowseStructureFolder(false); };
             places.Controls.Add(sourceCard, 0, 0);
             places.Controls.Add(new ArrowBadge { Dock = DockStyle.Fill }, 1, 0);
             places.Controls.Add(targetCard, 2, 0);
             layout.Controls.Add(places, 0, 1);
 
-            CardPanel toolsCard = new CardPanel { Dock = DockStyle.Fill, Padding = new Padding(20, 10, 20, 14) };
-            TableLayoutPanel tools = new TableLayoutPanel {
-                Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 2, Margin = new Padding(0), BackColor = SoftUi.Surface
+            CardPanel quickCard = new CardPanel { Dock = DockStyle.Fill,
+                Padding = new Padding(10, 2, 10, 2), Margin = new Padding(0, 0, 0, 6) };
+            TableLayoutPanel quickTools = new TableLayoutPanel {
+                Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1,
+                Margin = new Padding(0), BackColor = SoftUi.Surface
             };
-            tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
+            quickTools.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
+            quickTools.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 108));
+            quickTools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            quickTools.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            Button topicToggle = new SoftButton { Text = "업무·주제 편집 ▾", Dock = DockStyle.Fill,
+                Margin = new Padding(0, 2, 12, 2) };
+            quickTools.Controls.Add(topicToggle, 0, 0);
+            quickTools.Controls.Add(TextLabel("파일·폴더 찾기", 9F, FontStyle.Bold, SoftUi.Muted), 1, 0);
+            quickTools.Controls.Add(CreateSearchBar(), 2, 0);
+            quickCard.Controls.Add(quickTools);
+            layout.Controls.Add(quickCard, 0, 2);
+
+            CardPanel toolsCard = new CardPanel { Dock = DockStyle.Fill,
+                Padding = new Padding(20, 8, 20, 8), Margin = new Padding(0, 0, 0, 8), Visible = false };
+            TableLayoutPanel tools = new TableLayoutPanel {
+                Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Margin = new Padding(0), BackColor = SoftUi.Surface
+            };
+            tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             tools.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
-            tools.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 28));
-            tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
             tools.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
             tools.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             tools.Controls.Add(TextLabel("업무·주제 목록  ·  한 줄에 하나씩, 예: 예산 또는 업무 > 예산",
@@ -236,16 +257,20 @@ namespace DownloadOrganizer
             topicButtons.Controls.Add(recommendButton, 0, 1);
             tools.Controls.Add(topicButtons, 1, 0);
             tools.SetRowSpan(topicButtons, 2);
-            tools.Controls.Add(TextLabel("파일·폴더 찾기", 9F, FontStyle.Bold, SoftUi.Muted), 3, 0);
-            tools.Controls.Add(CreateSearchBar(), 3, 1);
             toolsCard.Controls.Add(tools);
-            toolsCard.Margin = new Padding(0, 0, 0, 12);
-            layout.Controls.Add(toolsCard, 0, 2);
+            layout.Controls.Add(toolsCard, 0, 3);
+            topicToggle.Click += delegate {
+                bool open = !toolsCard.Visible;
+                toolsCard.Visible = open;
+                layout.RowStyles[3].Height = open ? 112 : 0;
+                topicToggle.Text = open ? "업무·주제 접기 ▴" : "업무·주제 편집 ▾";
+                if (open) topics.Focus();
+            };
 
             split.Dock = DockStyle.Fill; split.Orientation = Orientation.Vertical;
-            split.SplitterWidth = 18; split.BackColor = SoftUi.Background; split.Margin = new Padding(0, 0, 0, 12);
+            split.SplitterWidth = 18; split.BackColor = SoftUi.Background; split.Margin = new Padding(0, 0, 0, 8);
             split.Panel1.BackColor = SoftUi.Background; split.Panel2.BackColor = SoftUi.Background;
-            layout.Controls.Add(split, 0, 3);
+            layout.Controls.Add(split, 0, 4);
 
             CardPanel leftCard = new CardPanel { Dock = DockStyle.Fill, Margin = new Padding(0) };
             TableLayoutPanel leftBody = Rows(42, 22, 13, -1);
@@ -295,13 +320,15 @@ namespace DownloadOrganizer
             rightBody.Controls.Add(CreateDragGuide(), 0, 5);
             rightCard.Controls.Add(rightBody);
             split.Panel2.Controls.Add(rightCard);
+            HookClipboardMenus();
 
             Button close = new SoftButton { Text = "닫기", Width = 96, Height = 40 };
             close.Click += delegate { Close(); };
             applyButton.Text = "변경 내용 확인 · 적용"; applyButton.Width = 230; applyButton.Height = 40;
             ((SoftButton)applyButton).Primary = true;
             applyButton.Click += ApplyClicked;
-            layout.Controls.Add(CreateSelectionCard(applyButton, close), 0, 4);
+            applyButton.Height = 32; close.Height = 32;
+            layout.Controls.Add(CreateSelectionCard(applyButton, close), 0, 5);
 
             status.Text = "오른쪽 구조를 고친 뒤 변경 내용을 확인하고 적용하세요.";
             status.Dock = DockStyle.Fill; status.TextAlign = ContentAlignment.MiddleLeft;
@@ -314,7 +341,7 @@ namespace DownloadOrganizer
             applyProgress.Dock = DockStyle.Fill; applyProgress.Margin = new Padding(4, 3, 0, 3);
             applyProgress.Visible = false;
             statusLine.Controls.Add(applyProgress, 1, 0);
-            layout.Controls.Add(statusLine, 0, 5);
+            layout.Controls.Add(statusLine, 0, 6);
 
             helpTips.SetToolTip(topics, "업무나 주제를 한 줄에 하나씩 적습니다. '업무 > 예산'처럼 하위 폴더도 지정할 수 있습니다.");
             helpTips.SetToolTip(recommendButton, "입력한 주제로 오른쪽 추천 구조를 다시 만듭니다.");
@@ -330,6 +357,58 @@ namespace DownloadOrganizer
             helpTips.SetToolTip(close, "파일과 폴더를 바꾸지 않고 창을 닫습니다.");
             helpTips.SetToolTip(sourceCard, "감시 폴더: " + source);
             helpTips.SetToolTip(targetCard, "정리할 상위 폴더: " + root);
+        }
+
+        private void BrowseStructureFolder(bool watchFolder)
+        {
+            if (loading || working || suggesting)
+            { status.Text = "현재 작업이 끝난 뒤 폴더를 바꿔 주세요."; return; }
+            using (FolderBrowserDialog dialog = new FolderBrowserDialog())
+            {
+                dialog.Description = watchFolder ? "새 파일을 감시할 폴더를 선택하세요" :
+                    "구조를 편집할 상위 폴더를 선택하세요";
+                dialog.SelectedPath = watchFolder ? source : root;
+                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+                string nextSource = watchFolder ? Engine.Full(dialog.SelectedPath) : source;
+                string nextRoot = watchFolder ? root : Engine.Full(dialog.SelectedPath);
+                string error = Engine.Validate(nextSource, nextRoot);
+                if (error != "") { status.Text = error; MessageBox.Show(this, error, "폴더 변경 불가"); return; }
+                if (nextSource.Equals(source, StringComparison.OrdinalIgnoreCase) &&
+                    nextRoot.Equals(root, StringComparison.OrdinalIgnoreCase)) return;
+                if (edited && MessageBox.Show(this,
+                    "현재 미리보기에서 수정한 배치가 초기화됩니다. 새 폴더의 구조를 열까요?",
+                    "작업 폴더 변경", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                    return;
+                try { SwitchStructureFolders(nextSource, nextRoot); }
+                catch (Exception ex)
+                {
+                    status.Text = ex.Message;
+                    MessageBox.Show(this, ex.Message, "폴더 변경 불가", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+        }
+
+        internal void SwitchStructureFolders(string nextSource, string nextRoot)
+        {
+            if (loading || working || suggesting)
+                throw new IOException("현재 작업이 끝난 뒤 폴더를 바꿔 주세요.");
+            nextSource = Engine.Full(nextSource); nextRoot = Engine.Full(nextRoot);
+            string error = Engine.Validate(nextSource, nextRoot);
+            if (error != "") throw new IOException(error);
+            if (nextSource.Equals(source, StringComparison.OrdinalIgnoreCase) &&
+                nextRoot.Equals(root, StringComparison.OrdinalIgnoreCase)) return;
+            string previousSource = source, previousRoot = root;
+            source = nextSource; root = nextRoot;
+            try { CheckRecovery(); }
+            catch { source = previousSource; root = previousRoot; throw; }
+            Loaded = false;
+            ClearSelectedFiles();
+            current.Nodes.Clear(); proposed.Nodes.Clear();
+            currentRoot = currentDownloads = proposedRoot = proposedHold = null;
+            UpdateLocationCards();
+            helpTips.SetToolTip(sourceCard, "감시 폴더: " + source);
+            helpTips.SetToolTip(targetCard, "정리할 상위 폴더: " + root);
+            StartBuild();
         }
 
         private void CheckRecovery()
@@ -545,6 +624,7 @@ namespace DownloadOrganizer
         private void StartBuild()
         {
             if (loading || working || IsDisposed) return;
+            ClearPlanClipboard();
             loading = true; Loaded = false;
             recommendButton.Enabled = false; resetButton.Enabled = false;
             applyButton.Enabled = false; addButton.Enabled = false;
@@ -928,7 +1008,7 @@ namespace DownloadOrganizer
                         Destination = StructurePlanner.Destination(root, relative, node.Text),
                         Length = tag.Length, LastWriteTicks = tag.LastWriteTicks,
                         CreationTicks = tag.CreationTicks,
-                        FromDownloads = tag.FromDownloads
+                        FromDownloads = tag.FromDownloads, IsCopy = tag.IsCopy
                     });
                 }
             }
@@ -991,7 +1071,8 @@ namespace DownloadOrganizer
                     Source = file.Source,
                     Destination = StructurePlanner.RemapRoot(file.Destination, root, newRoot),
                     Length = file.Length, LastWriteTicks = file.LastWriteTicks,
-                    CreationTicks = file.CreationTicks, FromDownloads = file.FromDownloads
+                    CreationTicks = file.CreationTicks, FromDownloads = file.FromDownloads,
+                    IsCopy = file.IsCopy
                 });
             foreach (FolderDelta folder in plan.FolderChanges)
                 historyPlan.FolderChanges.Add(new FolderDelta {
@@ -1012,20 +1093,24 @@ namespace DownloadOrganizer
             catch (Exception ex) { status.Text = ex.Message; return; }
             string newRoot = ProposedRootPath();
             bool renameRoot = !newRoot.Equals(root, StringComparison.OrdinalIgnoreCase);
-            int moved = plan.Files.Count(f => !f.Source.Equals(f.Destination, StringComparison.OrdinalIgnoreCase));
+            int copied = plan.Files.Count(f => f.IsCopy);
+            int moved = plan.Files.Count(f => !f.IsCopy &&
+                !f.Source.Equals(f.Destination, StringComparison.OrdinalIgnoreCase));
+            int operations = moved + copied;
             int created = plan.Directories.Count(d => !snapshot.TargetDirectories.Contains(d));
             int removed = snapshot.TargetDirectories.Count(d => !plan.Directories.Contains(d, StringComparer.OrdinalIgnoreCase));
             string message = (renameRoot ? "정리할 상위 폴더 이름: " + Path.GetFileName(root) +
                 " → " + Path.GetFileName(newRoot) + "\n" : "") +
-                "파일 " + moved + "개 변경, 폴더 " + created + "개 생성, 빈 폴더 " + removed +
+                "파일 " + moved + "개 이동 · " + copied + "개 복사, 폴더 " + created +
+                "개 생성, 빈 폴더 " + removed +
                 "개 정리 예정입니다.\n\n오른쪽에 보이는 구조대로 적용할까요?";
             if (MessageBox.Show(this, message, "변경 내용 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question)
                 != DialogResult.Yes) return;
             working = true; applyButton.Enabled = false;
-            status.Text = moved > 0 ? "파일 0/" + moved + "개 이동 준비 중..." : "폴더 구조를 적용하는 중입니다...";
-            applyProgress.Minimum = 0; applyProgress.Maximum = Math.Max(1, moved);
-            applyProgress.Value = 0; applyProgress.Visible = moved > 0;
-            statusLine.ColumnStyles[1].Width = moved > 0 ? 180 : 0;
+            status.Text = operations > 0 ? "파일 0/" + operations + "개 작업 준비 중..." : "폴더 구조를 적용하는 중입니다...";
+            applyProgress.Minimum = 0; applyProgress.Maximum = Math.Max(1, operations);
+            applyProgress.Value = 0; applyProgress.Visible = operations > 0;
+            statusLine.ColumnStyles[1].Width = operations > 0 ? 180 : 0;
             recommendButton.Enabled = false; resetButton.Enabled = false;
             addButton.Enabled = false; renameButton.Enabled = false; batchRenameButton.Enabled = false; removeButton.Enabled = false;
             proposed.Enabled = false; topics.ReadOnly = true;
@@ -1037,8 +1122,8 @@ namespace DownloadOrganizer
                 bool stageReported = false, moveReported = false;
                 Action<int, int, string, string> report = delegate(int completed, int total, string filePath, string phase)
                 {
-                    bool firstStage = phase == "이동 준비 중" && !stageReported;
-                    bool firstMove = phase == "이동 중" && !moveReported;
+                    bool firstStage = (phase == "이동 준비 중" || phase == "복사 준비 중") && !stageReported;
+                    bool firstMove = (phase == "이동 중" || phase == "복사 중") && !moveReported;
                     bool final = phase == "폴더 정리 중";
                     if (firstStage) stageReported = true;
                     if (firstMove) moveReported = true;
@@ -1061,7 +1146,7 @@ namespace DownloadOrganizer
                 if (progress == null) return;
                 applyProgress.Value = Math.Max(0, Math.Min(applyProgress.Maximum, progress.Completed));
                 if (progress.Phase == "폴더 정리 중")
-                    status.Text = "파일 " + progress.Total + "/" + progress.Total + "개 이동 완료 · 폴더 정리 중...";
+                    status.Text = "파일 " + progress.Total + "/" + progress.Total + "개 작업 완료 · 폴더 정리 중...";
                 else
                     status.Text = progress.Phase + ": " + DisplayLocation(progress.FilePath) +
                         " (" + progress.Completed + "/" + progress.Total + "개 완료)";

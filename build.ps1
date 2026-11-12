@@ -10,6 +10,7 @@ $sources = @(
     'DownloadOrganizer.cs', 'DesktopInstance.cs', 'MainForm.Async.cs', 'MainForm.Tray.cs',
     'StructurePlanner.cs', 'StructureEditor.cs', 'StructureEditor.Visual.cs',
     'StructureEditor.Drag.cs', 'StructureEditor.Selection.cs', 'StructureEditor.Rename.cs',
+    'StructureEditor.Clipboard.cs',
     'SoftUi.cs', 'DragGhost.cs', 'LocalSearchIndex.cs', 'ChangeJournal.cs', 'HistoryForm.cs',
     'TopicSuggester.cs', 'TopicSuggestionForm.cs'
 ) | ForEach-Object { Join-Path $PSScriptRoot $_ }

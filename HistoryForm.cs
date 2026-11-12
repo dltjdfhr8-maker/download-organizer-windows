@@ -15,6 +15,7 @@ namespace DownloadOrganizer
         private readonly Action persistChanges;
         private List<ChangeRecord> visible = new List<ChangeRecord>();
         private ComboBox filter = new ComboBox();
+        private ComboBox undoScope = new ComboBox();
         private TextBox search = new TextBox();
         private ListView list = new ListView();
         private Label details = new Label();
@@ -64,6 +65,7 @@ namespace DownloadOrganizer
             layout.Controls.Add(tools, 0, 0);
 
             list.Dock = DockStyle.Fill; list.View = View.Details; list.FullRowSelect = true;
+            list.MultiSelect = true;
             list.HideSelection = false; list.VirtualMode = true;
             list.Columns.Add("시간", 135); list.Columns.Add("종류", 90);
             list.Columns.Add("항목", 190); list.Columns.Add("이전 위치", 225);
@@ -88,21 +90,39 @@ namespace DownloadOrganizer
             details.BackColor = SoftUi.AccentSoft;
             details.Padding = new Padding(12); details.Text = "이력을 선택하면 변경 전후 경로가 표시됩니다.";
             layout.Controls.Add(details, 0, 2);
+            TableLayoutPanel footer = new TableLayoutPanel {
+                Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0)
+            };
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 330));
+            footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            FlowLayoutPanel scopeTools = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+            scopeTools.Controls.Add(new Label { Text = "되돌릴 범위", AutoSize = true,
+                Padding = new Padding(0, 7, 0, 0) });
+            undoScope.DropDownStyle = ComboBoxStyle.DropDownList; undoScope.Width = 170;
+            undoScope.Items.AddRange(new object[] { "선택한 이력", "같은 작업 전체", "현재 목록 전체" });
+            undoScope.SelectedIndex = 0;
+            undoScope.SelectedIndexChanged += delegate { ShowDetails(); };
+            scopeTools.Controls.Add(undoScope);
+            footer.Controls.Add(scopeTools, 0, 0);
             FlowLayoutPanel buttons = new FlowLayoutPanel {
-                Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft
+                Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft,
+                WrapContents = false
             };
             Button close = new SoftButton { Text = "닫기", Width = 90, Height = 34 };
             close.Click += delegate { Close(); };
-            undoButton.Text = "선택한 이력 되돌리기"; undoButton.Width = 175; undoButton.Height = 34;
+            undoButton.Text = "선택한 이력 되돌리기"; undoButton.Width = 210; undoButton.Height = 34;
             ((SoftButton)undoButton).Primary = true;
             undoButton.Click += UndoSelected;
             buttons.Controls.Add(close); buttons.Controls.Add(undoButton);
-            layout.Controls.Add(buttons, 0, 3);
+            footer.Controls.Add(buttons, 1, 0);
+            layout.Controls.Add(footer, 0, 3);
 
             helpTips.SetToolTip(filter, "전체 이력이나 파일·폴더 이력만 골라 봅니다.");
             helpTips.SetToolTip(search, "파일·폴더 이름 또는 변경 전후 경로로 이력을 찾습니다.");
-            helpTips.SetToolTip(list, "되돌릴 이력을 선택하면 아래에 변경 전후 위치가 표시됩니다.");
-            helpTips.SetToolTip(undoButton, "선택한 변경을 되돌립니다. 일괄 이름 변경은 같은 작업의 나머지 파일을 함께 되돌릴 수 있습니다.");
+            helpTips.SetToolTip(list, "Ctrl·Shift로 여러 이력을 선택할 수 있습니다. 아래에서 되돌릴 범위를 확인하세요.");
+            helpTips.SetToolTip(undoScope, "선택한 이력, 같은 작업의 모든 이력, 현재 검색·필터 결과 전체 중 고릅니다.");
+            helpTips.SetToolTip(undoButton, "선택한 범위의 이력을 한 번에 되돌립니다. 충돌한 항목은 그대로 두고 결과를 알려줍니다.");
             helpTips.SetToolTip(close, "변경 이력 창을 닫습니다.");
         }
 
@@ -119,8 +139,10 @@ namespace DownloadOrganizer
             if (list.IsDisposed) return;
             string query = search.Text.Trim();
             string kind = filter.SelectedItem == null ? "전체" : filter.SelectedItem.ToString();
+            list.SelectedIndices.Clear();
             visible = journal.Records.AsEnumerable().Reverse().Where(record =>
-                (kind == "전체" || (kind == "파일" ? record.Kind == "파일 이동" : record.Kind != "파일 이동")) &&
+                (kind == "전체" || (kind == "파일" ? record.Kind.StartsWith("파일", StringComparison.Ordinal) :
+                    !record.Kind.StartsWith("파일", StringComparison.Ordinal))) &&
                 (query == "" || record.From.IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0 ||
                  record.To.IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0 ||
                  record.Kind.IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0 ||
@@ -128,96 +150,131 @@ namespace DownloadOrganizer
                 .ToList();
             list.VirtualListSize = visible.Count;
             list.Invalidate();
-            details.Text = visible.Count + "개 이력이 있습니다. 파일이나 폴더의 이전 위치를 확인하고 되돌릴 수 있습니다.";
+            details.Text = visible.Count + "개 이력이 있습니다. Ctrl·Shift로 여러 항목을 선택할 수 있습니다.";
+            UpdateUndoButton();
         }
 
-        private ChangeRecord Selected()
+        private List<ChangeRecord> SelectedRecords()
         {
-            if (list.SelectedIndices.Count == 0) return null;
-            int index = list.SelectedIndices[0];
-            return index >= 0 && index < visible.Count ? visible[index] : null;
+            return list.SelectedIndices.Cast<int>().Where(index => index >= 0 && index < visible.Count)
+                .Select(index => visible[index]).Distinct().ToList();
+        }
+
+        private List<ChangeRecord> UndoTargets()
+        {
+            List<ChangeRecord> selected = SelectedRecords();
+            if (undoScope.SelectedIndex == 2)
+                return visible.Where(record => !record.Undone).ToList();
+            if (undoScope.SelectedIndex == 1)
+            {
+                HashSet<string> groups = new HashSet<string>(selected.Where(record =>
+                    record.GroupId != "").Select(record => record.GroupId));
+                return journal.Records.Where(record => !record.Undone &&
+                    (selected.Contains(record) || (record.GroupId != "" &&
+                    groups.Contains(record.GroupId)))).ToList();
+            }
+            return selected.Where(record => !record.Undone).ToList();
+        }
+
+        private void UpdateUndoButton()
+        {
+            int count = UndoTargets().Count;
+            undoButton.Text = count > 1 ? count + "개 이력 되돌리기" : "선택한 이력 되돌리기";
         }
 
         private void ShowDetails()
         {
-            ChangeRecord record = Selected();
-            if (record == null) return;
+            List<ChangeRecord> selected = SelectedRecords();
+            UpdateUndoButton();
+            if (selected.Count == 0)
+            {
+                details.Text = undoScope.SelectedIndex == 2 ?
+                    "현재 목록의 되돌리지 않은 이력 " + UndoTargets().Count + "개를 대상으로 합니다." :
+                    "Ctrl·Shift로 이력을 선택하세요.";
+                return;
+            }
+            if (selected.Count > 1)
+            {
+                details.Text = selected.Count + "개 이력을 선택했습니다. 되돌릴 범위: " +
+                    undoScope.SelectedItem + " · 실제 대상 " + UndoTargets().Count + "개\n" +
+                    "충돌한 항목은 그대로 두고 가능한 항목부터 되돌립니다.";
+                return;
+            }
+            ChangeRecord record = selected[0];
             details.Text = DisplayKind(record) + "  ·  " + record.When + "\n" +
-                "이전: " + (record.From == "" ? "(없음)" : record.From) + "\n" +
-                "변경: " + (record.To == "" ? "(없음)" : record.To) +
+                (record.Kind == "파일 복사" ? "원본: " : "이전: ") +
+                (record.From == "" ? "(없음)" : record.From) + "\n" +
+                (record.Kind == "파일 복사" ? "복사본: " : "변경: ") +
+                (record.To == "" ? "(없음)" : record.To) +
                 (record.Current != "" && record.Current != record.To ? "\n현재: " + record.Current : "") +
                 (journal.PendingRenameGroup(record).Count > 1 ? "\n같은 작업에서 바꾼 이름 " +
-                    journal.PendingRenameGroup(record).Count + "개를 함께 되돌릴 수 있습니다." : "");
+                    journal.PendingRenameGroup(record).Count + "개를 '같은 작업 전체'로 되돌릴 수 있습니다." : "");
         }
 
         private void UndoSelected(object sender, EventArgs e)
         {
             if (working) return;
-            ChangeRecord record = Selected();
-            if (record == null) { details.Text = "되돌릴 이력을 선택하세요."; return; }
-            List<ChangeRecord> pendingGroup = journal.PendingRenameGroup(record);
-            bool groupUndo = false;
-            if (pendingGroup.Count > 1 || (record.Undone && pendingGroup.Count > 0))
-            {
-                DialogResult choice = MessageBox.Show(this,
-                    "같은 작업에서 이름을 바꾼 파일 " + pendingGroup.Count + "개가 아직 남아 있습니다.\n\n" +
-                    "예: 남은 파일 모두 되돌리기\n아니요: 선택한 파일 하나만 되돌리기\n취소: 그대로 두기",
-                    "이름 변경 되돌리기", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
-                if (choice == DialogResult.Cancel) return;
-                groupUndo = choice == DialogResult.Yes;
-            }
-            if (!groupUndo)
-            {
-                if (record.Undone) { details.Text = "이 파일 이름은 이미 되돌렸습니다."; return; }
-                if (MessageBox.Show(this, DisplayKind(record) + "\n" + record.From + "\n→ " + record.To +
-                    "\n\n이 항목을 이전 상태로 돌릴까요?", "이력 되돌리기 확인",
-                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-            }
-            working = true; undoButton.Enabled = false; filter.Enabled = false; list.Enabled = false;
+            List<ChangeRecord> targets = UndoTargets();
+            if (targets.Count == 0) { details.Text = "되돌릴 이력을 선택하세요."; return; }
+            string examples = String.Join("\n", targets.Take(4).Select(record =>
+                "• " + DisplayKind(record) + " · " + Path.GetFileName(record.To != "" ?
+                    record.To : record.From)).ToArray());
+            string confirmation = "범위: " + undoScope.SelectedItem + "\n대상: " + targets.Count +
+                "개 이력\n\n" + examples + (targets.Count > 4 ? "\n• 그 밖에 " +
+                (targets.Count - 4) + "개" : "") +
+                (targets.Any(record => record.Kind == "파일 복사") ?
+                    "\n\n파일 복사 이력은 복사본만 제거합니다." : "") +
+                "\n\n이전 상태로 돌릴까요? 충돌한 항목은 그대로 두고 결과를 알려줍니다.";
+            if (MessageBox.Show(this, confirmation, "일괄 되돌리기 확인",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            working = true; undoButton.Enabled = false; filter.Enabled = false;
+            undoScope.Enabled = false; list.Enabled = false;
             search.ReadOnly = true; details.Text = "선택한 항목을 되돌리는 중입니다...";
             BackgroundWorker worker = new BackgroundWorker();
+            worker.WorkerReportsProgress = true;
             worker.DoWork += delegate(object workSender, DoWorkEventArgs workArgs)
             {
-                List<ChangeRecord> affected;
-                string message;
-                if (groupUndo)
-                {
-                    affected = journal.UndoRenameGroup(record);
-                    message = "파일 " + affected.Count + "개의 이름을 원래대로 되돌렸습니다.";
-                }
-                else
-                {
-                    message = journal.Undo(record);
-                    affected = new List<ChangeRecord> { record };
-                }
-                string warning = "";
-                try { if (persistChanges != null) persistChanges(); }
-                catch (Exception ex) { warning = ex.Message; }
-                workArgs.Result = Tuple.Create(message, warning, affected);
+                workArgs.Result = journal.UndoMany(targets, persistChanges,
+                    delegate(int completed, int total, string name) {
+                        worker.ReportProgress(total == 0 ? 0 : completed * 100 / total,
+                            completed + "/" + total + "개 되돌리는 중 · " + name);
+                    });
             };
+            worker.ProgressChanged += delegate(object progressSender, ProgressChangedEventArgs progressArgs)
+            { if (!IsDisposed) details.Text = (string)progressArgs.UserState; };
             worker.RunWorkerCompleted += delegate(object workSender, RunWorkerCompletedEventArgs result)
             {
                 working = false; undoButton.Enabled = true; filter.Enabled = true;
-                list.Enabled = true; search.ReadOnly = false;
+                undoScope.Enabled = true; list.Enabled = true; search.ReadOnly = false;
                 if (result.Error != null)
                 {
                     details.Text = result.Error.Message;
                     MessageBox.Show(this, result.Error.Message, "되돌리기 불가", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
-                Tuple<string, string, List<ChangeRecord>> outcome =
-                    (Tuple<string, string, List<ChangeRecord>>)result.Result;
-                try { foreach (ChangeRecord changed in outcome.Item3) afterUndo(changed); }
-                catch (Exception ex)
+                UndoBatchOutcome outcome = (UndoBatchOutcome)result.Result;
+                string callbackError = "";
+                foreach (ChangeRecord changed in outcome.Undone)
                 {
-                    MessageBox.Show(this, "항목은 되돌렸지만 이력 저장에 실패했습니다: " + ex.Message,
-                        "이력 저장 실패", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    try { if (afterUndo != null) afterUndo(changed); }
+                    catch (Exception ex) { if (callbackError == "") callbackError = ex.Message; }
                 }
                 RefreshVisible();
-                details.Text = outcome.Item1;
-                if (outcome.Item2 != "")
-                    MessageBox.Show(this, "항목은 되돌렸지만 이력 저장에 실패했습니다: " + outcome.Item2,
-                        "이력 저장 실패", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                details.Text = outcome.Undone.Count + "개 되돌림, " + outcome.Failed.Count +
+                    "개 충돌" + (outcome.SaveError == "" ? "" : " · 이력 저장 실패") + ".";
+                if (outcome.Failed.Count > 0)
+                {
+                    string failures = String.Join("\n", outcome.Failed.Take(3).Select(pair =>
+                        "• " + Path.GetFileName(pair.Key.To != "" ? pair.Key.To : pair.Key.From) +
+                        ": " + pair.Value).ToArray());
+                    MessageBox.Show(this, outcome.Failed.Count + "개 이력을 되돌리지 못했습니다.\n" +
+                        failures + (outcome.Failed.Count > 3 ? "\n그 밖의 실패는 이력을 다시 확인하세요." : ""),
+                        "일부 이력 유지", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+                if (outcome.SaveError != "" || callbackError != "")
+                    MessageBox.Show(this, "되돌린 항목의 기록을 저장하거나 화면에 반영하지 못했습니다: " +
+                        (outcome.SaveError != "" ? outcome.SaveError : callbackError),
+                        "이력 저장 확인", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             };
             worker.RunWorkerAsync();
         }

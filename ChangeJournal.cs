@@ -21,6 +21,13 @@ namespace DownloadOrganizer
         public List<string> RelatedFileIds = new List<string>();
     }
 
+    public class UndoBatchOutcome
+    {
+        public readonly List<ChangeRecord> Undone = new List<ChangeRecord>();
+        public readonly Dictionary<ChangeRecord, string> Failed = new Dictionary<ChangeRecord, string>();
+        public string SaveError = "";
+    }
+
     public class ChangeJournal
     {
         public const string RootRenameReason = "상위 폴더 이름 변경";
@@ -66,6 +73,19 @@ namespace DownloadOrganizer
             return record;
         }
 
+        public ChangeRecord AddCopy(string from, string to, long length, long ticks,
+            string when, string groupId)
+        {
+            ChangeRecord record = new ChangeRecord {
+                Id = Guid.NewGuid().ToString("N"), GroupId = groupId,
+                Kind = "파일 복사", From = Engine.Full(from), To = Engine.Full(to),
+                Current = Engine.Full(to), Length = length, LastWriteTicks = ticks,
+                When = when, Reason = "구조 편집"
+            };
+            Records.Add(record);
+            return record;
+        }
+
         internal void AddStructure(PlanData plan, string when)
         {
             int previousCount = Records.Count;
@@ -75,9 +95,15 @@ namespace DownloadOrganizer
             List<ChangeRecord> fileRecords = new List<ChangeRecord>();
             foreach (PlannedFile file in plan.Files)
             {
-                if (Engine.Full(file.Source).Equals(Engine.Full(file.Destination), StringComparison.OrdinalIgnoreCase))
+                if (!file.IsCopy && Engine.Full(file.Source).Equals(Engine.Full(file.Destination), StringComparison.OrdinalIgnoreCase))
                     continue;
                 FileInfo info = new FileInfo(file.Destination);
+                if (file.IsCopy)
+                {
+                    fileRecords.Add(AddCopy(file.Source, file.Destination,
+                        info.Length, info.LastWriteTimeUtc.Ticks, when, groupId));
+                    continue;
+                }
                 string reason = Path.GetDirectoryName(file.Source).Equals(
                     Path.GetDirectoryName(file.Destination), StringComparison.OrdinalIgnoreCase) ?
                     "파일 이름 변경" : "구조 편집";
@@ -117,10 +143,61 @@ namespace DownloadOrganizer
         {
             if (record == null || record.Undone) throw new IOException("이미 되돌린 이력입니다.");
             if (record.Kind == "파일 이동") return UndoFile(record);
+            if (record.Kind == "파일 복사") return UndoCopy(record);
             if (record.Kind == "폴더 생성") return UndoCreatedFolder(record);
             if (record.Kind == "폴더 제거") return UndoRemovedFolder(record);
             if (record.Kind == "폴더 이동") return UndoMovedFolder(record);
             throw new IOException("알 수 없는 이력 종류입니다.");
+        }
+
+        public UndoBatchOutcome UndoMany(IEnumerable<ChangeRecord> selected, Action persist = null,
+            Action<int, int, string> progress = null)
+        {
+            if (selected == null) throw new ArgumentNullException("selected");
+            List<ChangeRecord> pending = selected.Distinct().Where(r => r != null && !r.Undone)
+                .OrderByDescending(r => Records.IndexOf(r)).ToList();
+            if (pending.Any(r => !Records.Contains(r)))
+                throw new IOException("이력 목록에 없는 항목이 선택되었습니다.");
+            int total = pending.Count;
+            UndoBatchOutcome outcome = new UndoBatchOutcome();
+            while (pending.Count > 0)
+            {
+                bool progressed = false;
+                foreach (ChangeRecord record in pending.ToList())
+                {
+                    if (record.Undone)
+                    {
+                        pending.Remove(record);
+                        outcome.Failed.Remove(record);
+                        progressed = true;
+                        continue;
+                    }
+                    try
+                    {
+                        HashSet<ChangeRecord> before = new HashSet<ChangeRecord>(
+                            Records.Where(r => r.Undone));
+                        List<ChangeRecord> renameGroup = PendingRenameGroup(record);
+                        if (renameGroup.Count > 1 && renameGroup.All(pending.Contains))
+                            UndoRenameGroup(record);
+                        else Undo(record);
+                        foreach (ChangeRecord changed in Records.Where(r => r.Undone && !before.Contains(r)))
+                            outcome.Undone.Add(changed);
+                        pending.RemoveAll(r => r.Undone);
+                        foreach (ChangeRecord changed in outcome.Undone)
+                            outcome.Failed.Remove(changed);
+                        progressed = true;
+                        try { if (persist != null) persist(); }
+                        catch (Exception ex) { outcome.SaveError = ex.Message; return outcome; }
+                        int completed = total - pending.Count;
+                        if (progress != null && (completed == total || completed == 1 || completed % 10 == 0))
+                            progress(completed, total, Path.GetFileName(record.To != "" ?
+                                record.To : record.From));
+                    }
+                    catch (Exception ex) { outcome.Failed[record] = ex.Message; }
+                }
+                if (!progressed) break;
+            }
+            return outcome;
         }
 
         public List<ChangeRecord> PendingRenameGroup(ChangeRecord record)
@@ -228,6 +305,18 @@ namespace DownloadOrganizer
             record.Current = target; record.Undone = true;
             return (record.Reason == "파일 이름 변경" ? "파일 이름을 되돌렸습니다: " :
                 "파일을 이전 위치로 돌렸습니다: ") + Path.GetFileName(record.From);
+        }
+
+        private string UndoCopy(ChangeRecord record)
+        {
+            string current = record.Current == "" ? record.To : record.Current;
+            if (!File.Exists(current)) throw new IOException("복사본을 찾을 수 없습니다: " + current);
+            FileInfo info = new FileInfo(current);
+            if (info.Length != record.Length || info.LastWriteTimeUtc.Ticks != record.LastWriteTicks)
+                throw new IOException("복사본이 변경되어 자동으로 되돌릴 수 없습니다: " + current);
+            File.Delete(current);
+            record.Current = ""; record.Undone = true;
+            return "복사본을 제거했습니다. 원본은 그대로 있습니다: " + Path.GetFileName(record.From);
         }
 
         private string UndoCreatedFolder(ChangeRecord record)

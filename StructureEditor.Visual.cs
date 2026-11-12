@@ -264,8 +264,8 @@ namespace DownloadOrganizer
         // Bottom card: what is selected, where it is now, where it will go, and the apply button.
         private Control CreateSelectionCard(Button apply, Button close)
         {
-            CardPanel card = new CardPanel { Dock = DockStyle.Fill, Padding = new Padding(22, 12, 22, 10), Margin = new Padding(0, 0, 0, 4) };
-            TableLayoutPanel body = Rows(74, 13, -1);
+            CardPanel card = new CardPanel { Dock = DockStyle.Fill, Padding = new Padding(18, 6, 18, 6), Margin = new Padding(0, 0, 0, 2) };
+            TableLayoutPanel body = Rows(56, 7, -1);
             TableLayoutPanel details = new TableLayoutPanel {
                 Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 2, Margin = new Padding(0), BackColor = SoftUi.Surface
             };
@@ -273,7 +273,7 @@ namespace DownloadOrganizer
             details.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 26));
             details.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
             details.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
-            details.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+            details.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
             details.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             selectionCaption = TextLabel("선택한 항목", 9F, FontStyle.Regular, SoftUi.Muted);
             selectedNameLabel = TextLabel("항목을 선택하면 현재 위치와 적용 후 위치가 보여요", 12.5F, FontStyle.Bold, SoftUi.Muted);
@@ -339,12 +339,13 @@ namespace DownloadOrganizer
         {
             bool same = source.Equals(root, StringComparison.OrdinalIgnoreCase);
             sourceCard.SetContent(same ? "새 파일이 들어오는 곳 · 정리할 폴더와 같음" : "새 파일이 들어오는 곳",
-                FolderName(source), source, "감시 폴더");
+                FolderName(source), source, "감시 폴더 · 변경");
             string planned = ProposedRootPath();
             bool renamed = !planned.Equals(root, StringComparison.OrdinalIgnoreCase);
             string title = renamed ? FolderName(root) + "  →  " + FolderName(planned) : FolderName(root);
-            if (targetCard.TitleText != title)
-                targetCard.SetContent("이번에 구조를 바꿀 곳", title, root, renamed ? "이름 변경 예정" : "정리할 폴더");
+            if (targetCard.TitleText != title || targetCard.PathText != root)
+                targetCard.SetContent("이번에 구조를 바꿀 곳", title, root,
+                    renamed ? "이름 변경 예정 · 변경" : "정리할 폴더 · 변경");
         }
 
         // Readable folder location using the real folder names, e.g. "교육자료 > 홍보".
@@ -421,6 +422,8 @@ namespace DownloadOrganizer
                     }
                 }
             }
+            else if (tag.Kind == PlanKind.File && tag.IsCopy)
+            { badge = "복사"; changes[5]++; }
             else if (tag.Kind == PlanKind.File && !inherited &&
                 !tag.OriginalPath.Equals(planned, StringComparison.OrdinalIgnoreCase))
             {
@@ -430,7 +433,7 @@ namespace DownloadOrganizer
                 changes[badge == "이동" ? 0 : 3]++;
             }
             changeBadges[node] = badge;
-            Color color = badge == "새 폴더" ? Color.FromArgb(27, 125, 58) :
+            Color color = badge == "새 폴더" || badge == "복사" ? Color.FromArgb(27, 125, 58) :
                 (badge == "이동" || badge == "이름 변경") ? Color.FromArgb(0, 91, 173) :
                 tag.Kind == PlanKind.Hold ? Color.DimGray : Color.Black;
             if (node.ForeColor != color) node.ForeColor = color;
@@ -453,12 +456,13 @@ namespace DownloadOrganizer
             CountCurrentFiles(currentRoot);
             CountCurrentFiles(currentDownloads);
             HashSet<string> represented = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            int[] changes = new int[5];
+            int[] changes = new int[6];
             DecoratePlan(proposedRoot, root, false, represented, changes);
             DecoratePlan(proposedHold, source, true, represented, changes);
             int removed = snapshot == null ? 0 : snapshot.TargetDirectories.Count - represented.Count;
             List<string> parts = new List<string>();
             if (changes[0] > 0) parts.Add("파일 " + changes[0] + "개 이동");
+            if (changes[5] > 0) parts.Add("파일 " + changes[5] + "개 복사");
             if (changes[3] > 0) parts.Add("파일 이름 " + changes[3] + "개 변경");
             if (changes[1] > 0) parts.Add("폴더 " + changes[1] + "개 이동");
             if (changes[4] > 0) parts.Add("폴더 이름 " + changes[4] + "개 변경");
