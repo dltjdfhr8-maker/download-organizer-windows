@@ -20,6 +20,7 @@
 - `LocalSearchIndex.cs`: local BM25 and fuzzy candidate retrieval.
 - `MainForm.Async.cs`, `MainForm.Tray.cs`: background scans, watcher, retries, tray lifecycle.
 - `StructureEditor*.cs`: two-tree plan editor, selection, visuals, drag, rename.
+- `TopicSuggester.cs`, `TopicSuggestionForm.cs`: topic-list suggestions and the review dialog.
 - `StructurePlanner.cs`: validates snapshots, stages file moves, rolls back failures, handles target-root rename.
 - `ChangeJournal.cs`, `HistoryForm.cs`: item history and undo.
 - `*.Smoke.cs`: focused integration checks; use `FolderRename.Smoke.cs` for root and child folder rename and undo.
@@ -29,7 +30,8 @@
 - Treat file paths as user data. Never hardcode a person's home directory; do not commit `settings.xml`, `history.xml`, `changes.xml`, `topics.txt`, or user files.
 - Do not read document contents or send file data to a service. Classification currently uses names only; keep uncertain matches in place.
 - Preserve no-overwrite behavior, the download-complete check, plan preview before apply, and rollback/undo safety.
-- Watch folder subdirectories are shown as grouping nodes; their files can be moved, while the source folder itself is not renamed in the structure editor.
+- Watch folder subdirectories are shown as grouping nodes; their files can be moved, while the source folder itself is not renamed in the structure editor. Dragging a watch subfolder onto a target folder creates a new plan folder with the same name and moves its remaining files and inner layout; the emptied source folder stays on disk (no cleanup yet).
+- Topic suggestions (`TopicSuggester.cs`, `TopicSuggestionForm.cs`) use names only: word / word-pair / shared Hangul prefix counts plus greedy coverage. Topic placement in the editor and the dialog's expected counts share `TopicScore` and `Pick`; keep them in sync. `TopicSuggest.Smoke.cs` covers it. Quality on real folders has not been checked yet.
 - The target root and child folders can be renamed. Root rename must update saved paths and watcher state; test separate-folder and same-folder modes and history undo.
 - Root rename is journaled as a `폴더 이동` record with Reason `ChangeJournal.RootRenameReason`. While it is not undone, undo targets under the old root resolve under the current root (`ChangeJournal.ResolveOriginal`), so the old root is never recreated. `FolderRename.Smoke.cs` covers root + child rename + file move with both undo orders. Undo across several sequential root renames and persisted (reloaded) journals is not yet smoke-tested.
 - `MainForm.Burst.Smoke.cs` and the F2-dialog step at the start of `FolderRename.Smoke.cs` are timing-sensitive; each failed once in several runs on 2026-11-12. Rerun before treating a failure as a regression.

@@ -89,7 +89,7 @@ namespace DownloadOrganizer
 
         private string TargetLabel(TreeNode target)
         {
-            if (target == proposedHold) return "감시 폴더에 남길 항목";
+            if (target == proposedHold) return proposedHold.Text;
             string planned;
             return target != null && plannedPaths.TryGetValue(target, out planned) ?
                 DisplayLocation(planned) : target == null ? "" : target.Text;
@@ -102,6 +102,17 @@ namespace DownloadOrganizer
             if (target == null || !IsFolder(target))
                 return "오른쪽의 폴더 위에 놓으세요.";
             PlanTag item = NodeTag(moving), destination = NodeTag(target);
+            if (item.Kind == PlanKind.SourceFolder)
+            {
+                if (destination.Kind != PlanKind.Folder && destination.Kind != PlanKind.Root)
+                    return "감시 폴더의 하위 폴더는 정리 폴더 안으로만 옮길 수 있습니다.";
+                if (FilesUnder(moving) == 0)
+                    return "이 폴더에는 아직 옮길 파일이 없습니다.";
+                if (target.Nodes.Cast<TreeNode>().Any(child =>
+                    child.Text.Equals(moving.Text, StringComparison.OrdinalIgnoreCase)))
+                    return "이 폴더에 같은 이름의 항목이 있습니다.";
+                return "";
+            }
             if (item.Kind != PlanKind.File && item.Kind != PlanKind.Folder)
                 return "파일이나 하위 폴더만 옮길 수 있습니다.";
             if (moving.Parent == target)

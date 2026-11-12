@@ -70,7 +70,8 @@ namespace DownloadOrganizer
         private TableLayoutPanel statusLine = new TableLayoutPanel();
         private ProgressBar applyProgress = new ProgressBar();
         private Button recommendButton = new SoftButton(), addButton = new SoftButton(), renameButton = new SoftButton(), batchRenameButton = new SoftButton(), removeButton = new SoftButton();
-        private Button applyButton = new SoftButton(), resetButton = new SoftButton();
+        private Button applyButton = new SoftButton(), resetButton = new SoftButton(), suggestTopicsButton = new SoftButton();
+        private bool suggesting;
         private readonly ToolTip helpTips = new ToolTip {
             InitialDelay = 450, ReshowDelay = 150, AutoPopDelay = 10000, ShowAlways = true
         };
@@ -163,7 +164,16 @@ namespace DownloadOrganizer
             topicArea.Controls.Add(topics, 0, 1);
             recommendButton.Text = "추천 구조 만들기"; recommendButton.Dock = DockStyle.Fill;
             recommendButton.Click += delegate { RebuildFromTopics(); };
-            topicArea.Controls.Add(recommendButton, 1, 1);
+            suggestTopicsButton.Text = "주제 추천 받기"; suggestTopicsButton.Dock = DockStyle.Fill;
+            suggestTopicsButton.Click += delegate { SuggestTopics(); };
+            TableLayoutPanel topicButtons = new TableLayoutPanel {
+                Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, Margin = new Padding(0)
+            };
+            topicButtons.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            topicButtons.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            topicButtons.Controls.Add(suggestTopicsButton, 0, 0);
+            topicButtons.Controls.Add(recommendButton, 0, 1);
+            topicArea.Controls.Add(topicButtons, 1, 1);
             layout.Controls.Add(topicArea, 0, 0);
             layout.Controls.Add(CreateSearchBar(), 0, 1);
 
@@ -241,6 +251,7 @@ namespace DownloadOrganizer
 
             helpTips.SetToolTip(topics, "업무나 주제를 한 줄에 하나씩 적습니다. '업무 > 예산'처럼 하위 폴더도 지정할 수 있습니다.");
             helpTips.SetToolTip(recommendButton, "입력한 주제로 오른쪽 추천 구조를 다시 만듭니다.");
+            helpTips.SetToolTip(suggestTopicsButton, "감시 폴더의 하위 폴더 이름과 파일 이름을 보고 주제 목록을 추천합니다. 고른 뒤 직접 고칠 수 있습니다.");
             helpTips.SetToolTip(current, "현재 폴더와 파일 목록입니다. 폴더 옆 숫자는 하위 폴더까지 포함한 파일 수입니다. 항목을 오른쪽으로 끌 수 있습니다.");
             helpTips.SetToolTip(proposed, "추천 구조입니다. 폴더 옆 숫자는 하위 폴더까지 포함한 파일 수입니다. 파일이나 폴더를 끌어 위치를 바꿀 수 있습니다.");
             helpTips.SetToolTip(addButton, "오른쪽에서 선택한 폴더 안에 새 폴더를 추가합니다.");
@@ -395,17 +406,22 @@ namespace DownloadOrganizer
             result.DownloadFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             result.CurrentRoot = MakeNode(rootName,
                 new PlanTag { Kind = PlanKind.Root, OriginalPath = root }, Color.Black);
-            result.CurrentDownloads = MakeNode(sameFolder ? "최상위 파일" : "감시 폴더",
+            string sourceName = Path.GetFileName(source);
+            if (sourceName == "") sourceName = source;
+            result.CurrentDownloads = MakeNode(sameFolder ? "최상위 파일" : sourceName + " · 감시 중",
                 new PlanTag { Kind = PlanKind.Hold, OriginalPath = source }, Color.Black);
             result.ProposedRoot = MakeNode(rootName,
                 new PlanTag { Kind = PlanKind.Root, OriginalPath = root }, Color.Black);
-            result.ProposedHold = MakeNode(sameFolder ? "최상위에 남길 파일" : "감시 폴더에 남길 항목",
+            result.ProposedHold = MakeNode(sameFolder ? "최상위에 그대로 둘 파일" :
+                "정리하지 않고 둘 파일 · " + sourceName,
                 new PlanTag { Kind = PlanKind.Hold }, Color.Gray);
+            result.CurrentDownloads.ToolTipText = "감시 폴더: " + source;
+            result.ProposedHold.ToolTipText = "여기 있는 파일은 적용 후에도 감시 폴더의 원래 위치에 그대로 남습니다.";
             AddExisting(result.Snapshot, result.CurrentRoot, result.ProposedRoot, sameFolder);
 
             List<string> topicPaths = TopicPaths(topicLines);
             foreach (string path in topicPaths) EnsureTopicPath(result.ProposedRoot, path);
-            List<TreeNode> topicLeaves = topicPaths.Select(x => EnsureTopicPath(result.ProposedRoot, x)).Distinct().ToList();
+            List<TreeNode> topicLeaves = topicPaths.Select(x => EnsureTopicPath(result.ProposedRoot, x)).ToList();
             List<FolderChoice> existingFolders = Engine.Folders(root);
             LocalSearchIndex existingSearch = new LocalSearchIndex(existingFolders);
             Dictionary<string, TreeNode> leftSourceFolders = new Dictionary<string, TreeNode>(StringComparer.OrdinalIgnoreCase);
@@ -433,12 +449,9 @@ namespace DownloadOrganizer
                 if (topicLeaves.Count > 0)
                 {
                     string stem = Path.GetFileNameWithoutExtension(file.Name);
-                    var matches = topicLeaves.Select(node => new {
-                        Node = node, Score = Engine.Similarity(stem, node.Text)
-                    }).OrderByDescending(x => x.Score).ToList();
-                    if (matches[0].Score >= 0.62 &&
-                        (matches.Count == 1 || matches[0].Score - matches[1].Score >= 0.15))
-                        destination = matches[0].Node;
+                    int pick = TopicSuggester.Pick(topicPaths, topicPaths.Select(path =>
+                        TopicSuggester.TopicScore(stem, TopicSuggester.LeafName(path))).ToList());
+                    if (pick >= 0) destination = topicLeaves[pick];
                 }
                 if (destination == null)
                 {
@@ -494,6 +507,64 @@ namespace DownloadOrganizer
             loader.RunWorkerAsync();
         }
 
+        internal static List<string> MergeTopicLines(IEnumerable<string> existing, IEnumerable<string> added, bool replace)
+        {
+            List<string> lines = replace ? new List<string>() :
+                existing.Select(x => x.TrimEnd()).Where(x => x.Trim() != "").ToList();
+            HashSet<string> seen = new HashSet<string>(lines.Select(TopicSuggestionForm.TopicPath),
+                StringComparer.OrdinalIgnoreCase);
+            foreach (string line in added)
+                if (seen.Add(TopicSuggestionForm.TopicPath(line))) lines.Add(line);
+            return lines;
+        }
+
+        private void SuggestTopics()
+        {
+            if (suggesting || working || loading || !Loaded)
+            { status.Text = "폴더를 다 읽은 뒤 다시 눌러 주세요."; return; }
+            List<string> files = downloadFiles.ToList();
+            if (files.Count == 0) { status.Text = "감시 폴더에 파일이 없어 추천할 주제가 없습니다."; return; }
+            List<string> existingNames = snapshot.TargetDirectories.Select(d => Path.GetFileName(d)).ToList();
+            suggesting = true; suggestTopicsButton.Enabled = false;
+            status.Text = "파일 " + files.Count + "개의 이름을 살펴 주제를 고르는 중입니다...";
+            List<string> stems = files.Select(f => Path.GetFileNameWithoutExtension(f)).ToList();
+            BackgroundWorker worker = new BackgroundWorker();
+            worker.DoWork += delegate(object sender, DoWorkEventArgs e)
+            {
+                List<TopicCandidate> candidates = TopicSuggester.Suggest(source, files, existingNames);
+                Dictionary<string, double[]> cache = new Dictionary<string, double[]>(StringComparer.OrdinalIgnoreCase);
+                foreach (TopicCandidate candidate in candidates)
+                {
+                    string leaf = TopicSuggester.LeafName(TopicSuggestionForm.TopicPath(candidate.Line));
+                    if (!cache.ContainsKey(leaf))
+                        cache[leaf] = stems.Select(stem => TopicSuggester.TopicScore(stem, leaf)).ToArray();
+                }
+                e.Result = Tuple.Create(candidates, cache);
+            };
+            worker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs e)
+            {
+                if (IsDisposed) return;
+                suggesting = false; suggestTopicsButton.Enabled = true;
+                if (e.Error != null) { status.Text = "주제 추천 실패: " + e.Error.Message; return; }
+                Tuple<List<TopicCandidate>, Dictionary<string, double[]>> result =
+                    (Tuple<List<TopicCandidate>, Dictionary<string, double[]>>)e.Result;
+                if (result.Item1.Count == 0)
+                {
+                    status.Text = "여러 파일에 함께 나오는 이름을 찾지 못했습니다. 주제를 직접 적어 주세요.";
+                    return;
+                }
+                using (TopicSuggestionForm dialog = new TopicSuggestionForm(result.Item1, stems, result.Item2))
+                {
+                    if (dialog.ShowDialog(this) != DialogResult.OK)
+                    { status.Text = "주제 목록을 바꾸지 않았습니다."; return; }
+                    topics.Lines = MergeTopicLines(topics.Lines, dialog.ChosenLines, dialog.ReplaceExisting).ToArray();
+                    status.Text = "추천 주제 " + dialog.ChosenLines.Count + "개를 목록에 넣었습니다. 목록은 계속 고칠 수 있습니다.";
+                }
+                RebuildFromTopics();
+            };
+            worker.RunWorkerAsync();
+        }
+
         private void RebuildFromTopics()
         {
             if (edited && MessageBox.Show(this, "오른쪽에서 수정한 배치가 초기화됩니다. 다시 만들까요?",
@@ -518,7 +589,8 @@ namespace DownloadOrganizer
         {
             if (!Loaded || loading || working) return;
             PlanTag tag = NodeTag(node);
-            if (tag == null || (tag.Kind != PlanKind.File && tag.Kind != PlanKind.Folder)) return;
+            if (tag == null || (tag.Kind != PlanKind.File && tag.Kind != PlanKind.Folder &&
+                tag.Kind != PlanKind.SourceFolder)) return;
             TreeView view = fromLeft ? current : proposed;
             DraggedNode drag = new DraggedNode { Node = node, FromLeft = fromLeft };
             drag.Nodes.AddRange(DragSourceNodes(view, node));
@@ -641,9 +713,55 @@ namespace DownloadOrganizer
             return true;
         }
 
+        // A watch-folder subfolder stays where it is on disk; dropping it creates a folder with
+        // the same name and layout in the target and moves the files that are still under it.
+        private static int MoveSourceFolderFiles(TreeNode sourceFolder, TreeNode destination,
+            Func<string, TreeNode> makeFolder)
+        {
+            int moved = 0;
+            foreach (TreeNode child in sourceFolder.Nodes.Cast<TreeNode>().ToList())
+            {
+                PlanTag tag = NodeTag(child);
+                if (tag == null) continue;
+                if (tag.Kind == PlanKind.File)
+                {
+                    child.Remove(); destination.Nodes.Add(child); moved++;
+                }
+                else if (tag.Kind == PlanKind.SourceFolder)
+                {
+                    TreeNode sub = makeFolder(child.Text);
+                    int inner = MoveSourceFolderFiles(child, sub, makeFolder);
+                    if (inner > 0) destination.Nodes.Add(sub);
+                    moved += inner;
+                }
+            }
+            return moved;
+        }
+
+        private static int FilesUnder(TreeNode node)
+        {
+            int count = 0;
+            foreach (TreeNode child in node.Nodes)
+                count += NodeTag(child) != null && NodeTag(child).Kind == PlanKind.File ? 1 : FilesUnder(child);
+            return count;
+        }
+
         internal bool MovePlannedNode(TreeNode moving, TreeNode target)
         {
             if (!CanDrop(moving, target)) return false;
+            if (NodeTag(moving).Kind == PlanKind.SourceFolder)
+            {
+                TreeNode folder = MakeNode(moving.Text, new PlanTag { Kind = PlanKind.Folder }, Color.DarkBlue);
+                int count = MoveSourceFolderFiles(moving, folder, name =>
+                    MakeNode(name, new PlanTag { Kind = PlanKind.Folder }, Color.DarkBlue));
+                target.Nodes.Add(folder); target.Expand(); folder.Expand();
+                proposed.SelectedNode = folder;
+                edited = true;
+                RefreshPlanVisuals();
+                status.Text = moving.Text + " 폴더와 파일 " + count + "개를 " + TargetLabel(folder) +
+                    "에 배치했습니다. 원래 하위 폴더는 비운 채 남으며, 실제 이동은 적용할 때 진행합니다.";
+                return true;
+            }
             moving.Remove(); target.Nodes.Add(moving); target.Expand();
             proposed.SelectedNode = moving;
             edited = true;

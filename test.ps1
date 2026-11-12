@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
 if (-not (Test-Path -LiteralPath $compiler)) { throw 'Windows .NET Framework C# 컴파일러를 찾을 수 없습니다.' }
 
@@ -6,7 +6,8 @@ $sources = @(
     'DownloadOrganizer.cs', 'DesktopInstance.cs', 'MainForm.Async.cs', 'MainForm.Tray.cs',
     'StructurePlanner.cs', 'StructureEditor.cs', 'StructureEditor.Visual.cs',
     'StructureEditor.Drag.cs', 'StructureEditor.Selection.cs', 'StructureEditor.Rename.cs',
-    'SoftUi.cs', 'DragGhost.cs', 'LocalSearchIndex.cs', 'ChangeJournal.cs', 'HistoryForm.cs'
+    'SoftUi.cs', 'DragGhost.cs', 'LocalSearchIndex.cs', 'ChangeJournal.cs', 'HistoryForm.cs',
+    'TopicSuggester.cs', 'TopicSuggestionForm.cs'
 ) | ForEach-Object { Join-Path $PSScriptRoot $_ }
 
 $outputDirectory = Join-Path $PSScriptRoot '.test-bin'
@@ -17,7 +18,8 @@ $checks = @(
     @{ Source = 'StructureEditor.Smoke.cs'; Main = 'DownloadOrganizer.StructureSmoke' },
     @{ Source = 'FolderRename.Smoke.cs'; Main = 'DownloadOrganizer.FolderRenameSmoke' },
     @{ Source = 'SingleFolder.Smoke.cs'; Main = 'DownloadOrganizer.SingleFolderSmoke' },
-    @{ Source = 'SingleFolderWatcher.Smoke.cs'; Main = 'DownloadOrganizer.SingleFolderWatcherSmoke' }
+    @{ Source = 'SingleFolderWatcher.Smoke.cs'; Main = 'DownloadOrganizer.SingleFolderWatcherSmoke' },
+    @{ Source = 'TopicSuggest.Smoke.cs'; Main = 'DownloadOrganizer.TopicSuggestSmoke' }
 )
 
 foreach ($check in $checks) {
