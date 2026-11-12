@@ -1,0 +1,23 @@
+# Local build and test output
+dist/
+.test-bin/
+*-test.exe
+*.pdb
+*.tmp
+*.log
+
+# User-specific settings and change history
+settings.xml
+history.xml
+changes.xml
+changes.before-*.xml
+topics.txt
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Editor and Python caches
+.vs/
+bin/
+obj/
+__pycache__/
+*.pyc
