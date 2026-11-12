@@ -87,6 +87,18 @@ namespace DownloadOrganizer
                     s.Line.Contains("제2차시험")), "하위 폴더 이름의 공통 주제를 찾지 못했습니다: " + lines);
                 Check(!suggested.Any(s => s.Line.Split(' ', '>').Any(w => w == "www" || w == "kr" || w == "2026")),
                     "의미 없는 낱말이 주제로 나왔습니다: " + lines);
+                string bundle = Path.Combine(source, "수강생배포", "04_A시사례_종량제봉투지급");
+                List<string> layered = new List<string>();
+                for (int i = 0; i < 4; i++)
+                {
+                    layered.Add(Path.Combine(bundle, "common", "모듈" + i + ".js"));
+                    layered.Add(Path.Combine(bundle, "실행하기", "실습" + i + ".hwp"));
+                }
+                string layeredLines = String.Join(" | ", TopicSuggester.Suggest(source, layered, new string[0])
+                    .Select(s => s.Line).ToArray());
+                Check(!layeredLines.Contains("common 수강생배포") && !layeredLines.Contains("실행하기 수강생배포") &&
+                    !layeredLines.Contains("종량제봉투지급 common") && !layeredLines.Contains("종량제봉투지급 실행하기"),
+                    "서로 다른 폴더 이름의 낱말을 이어 붙였습니다: " + layeredLines);
                 List<TopicCandidate> withExisting = TopicSuggester.Suggest(source, files, new[] { "대학원" });
                 Check(withExisting.Any(s => s.Line == "대학원" && s.MatchesExistingFolder) ||
                     !withExisting.Any(s => s.Line == "대학원"), "기존 정리 폴더와 같은 주제를 표시하지 않았습니다.");

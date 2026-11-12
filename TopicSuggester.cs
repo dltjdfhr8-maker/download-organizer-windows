@@ -36,7 +36,7 @@ namespace DownloadOrganizer
             @"^(\d+|\d+(학년도|년도|년|월|일|시|분|초|차|회|번|호|부|권|쪽|개|명|건|분기|학기|기|p|px|x)|v\d+|\d+[a-z])$",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        internal sealed class Token { public string Key, Display; }
+        internal sealed class Token { public string Key, Display; public int Segment; }
 
         private sealed class Candidate
         {
@@ -90,8 +90,10 @@ namespace DownloadOrganizer
                     if (excluded.Contains(token.Key)) continue;
                     AddCandidate(candidates, token.Key, token.Display, file,
                         1.0 + 0.08 * Math.Min(6, token.Key.Length - 2));
-                    if (i + 1 < tokens.Count && !excluded.Contains(tokens[i + 1].Key) &&
-                        tokens[i + 1].Key != token.Key)
+                    // Word pairs stay within one name: never join a file name to a folder name
+                    // or one folder level to the next.
+                    if (i + 1 < tokens.Count && tokens[i + 1].Segment == token.Segment &&
+                        !excluded.Contains(tokens[i + 1].Key) && tokens[i + 1].Key != token.Key)
                         AddCandidate(candidates, token.Key + " " + tokens[i + 1].Key,
                             token.Display + " " + tokens[i + 1].Display, file, 1.35);
                     if (IsHangul(token.Key) && token.Key.Length >= 3)
@@ -163,10 +165,14 @@ namespace DownloadOrganizer
             {
                 List<Token> tokens = Tokens(Path.GetFileNameWithoutExtension(path));
                 string folder = Path.GetDirectoryName(path);
+                int segment = 0;
                 if (Engine.SameOrInside(folder, source) && !folder.Equals(source, StringComparison.OrdinalIgnoreCase))
                     foreach (string part in folder.Substring(source.Length).Split(
                         new char[] { Path.DirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries))
-                        tokens.AddRange(Tokens(part));
+                    {
+                        segment++;
+                        foreach (Token token in Tokens(part)) { token.Segment = segment; tokens.Add(token); }
+                    }
                 documents.Add(tokens.GroupBy(t => t.Key).Select(g => g.First()).ToList());
             }
             HashSet<string> existingNames = new HashSet<string>(existingFolderNames.Select(NameKey),
