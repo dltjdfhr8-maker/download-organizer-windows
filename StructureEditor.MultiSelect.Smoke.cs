@@ -103,6 +103,11 @@ namespace DownloadOrganizer
                         throw new Exception("선택한 파일 수 표시 실패");
                     DraggedNode payload = new DraggedNode { Node = files[0], FromLeft = true,
                         Nodes = new List<TreeNode>(files) };
+                    // Selecting on the left scrolls the right tree, so locate the target again.
+                    targetNode.EnsureVisible();
+                    Application.DoEvents();
+                    point = proposed.PointToScreen(new Point(targetNode.Bounds.Left + 8,
+                        targetNode.Bounds.Top + targetNode.Bounds.Height / 2));
                     DragEventArgs batch = new DragEventArgs(new DataObject(payload), 0,
                         point.X, point.Y, DragDropEffects.Move, DragDropEffects.Move);
                     dragOver.Invoke(editor, new object[] { proposed, batch });

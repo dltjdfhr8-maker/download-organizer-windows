@@ -973,6 +973,24 @@ namespace DownloadOrganizer
     public static class Program
     {
         [STAThread]
+        // Appends the full error (with stack trace) to a local log so it can be diagnosed later.
+        // Only the exception is written: no file contents, nothing leaves the computer.
+        internal static string LogError(Exception error)
+        {
+            try
+            {
+                string folder = Path.Combine(Environment.GetFolderPath(
+                    Environment.SpecialFolder.LocalApplicationData), "DownloadOrganizer");
+                Directory.CreateDirectory(folder);
+                string path = Path.Combine(folder, "error.log");
+                if (File.Exists(path) && new FileInfo(path).Length > 1024 * 1024) File.Delete(path);
+                File.AppendAllText(path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " +
+                    Path.GetFileName(Application.ExecutablePath) + "\r\n" + error + "\r\n\r\n", Encoding.UTF8);
+                return path;
+            }
+            catch { return ""; }
+        }
+
         public static int Main(string[] args)
         {
             if (args.Length > 0 && args[0] == "--self-test") return SelfTest();
@@ -996,6 +1014,18 @@ namespace DownloadOrganizer
                     if (exitOnly) return 0;
                     Application.EnableVisualStyles();
                     Application.SetCompatibleTextRenderingDefault(false);
+                    Application.ThreadException += delegate(object sender, System.Threading.ThreadExceptionEventArgs e)
+                    {
+                        string log = LogError(e.Exception);
+                        MessageBox.Show("예상하지 못한 오류가 생겼지만 작업은 계속할 수 있습니다.\n\n" + e.Exception.Message +
+                            (log == "" ? "" : "\n\n자세한 내용을 기록했습니다:\n" + log),
+                            "다운로드 자동 정리", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    };
+                    AppDomain.CurrentDomain.UnhandledException += delegate(object sender, UnhandledExceptionEventArgs e)
+                    {
+                        Exception error = e.ExceptionObject as Exception;
+                        if (error != null) LogError(error);
+                    };
                     using (System.Threading.EventWaitHandle wake = new System.Threading.EventWaitHandle(
                         false, System.Threading.EventResetMode.AutoReset, wakeName))
                     using (System.Threading.EventWaitHandle exit = new System.Threading.EventWaitHandle(

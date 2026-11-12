@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -90,7 +90,9 @@ namespace DownloadOrganizer
             source = Engine.Full(sourceFolder);
             root = Engine.Full(targetRoot);
             Text = "폴더 구조 편집";
-            Width = 1160; Height = 760; MinimumSize = new Size(900, 600);
+            Rectangle area = Screen.FromPoint(Cursor.Position).WorkingArea;
+            Width = Math.Min(1340, area.Width); Height = Math.Min(980, area.Height);
+            MinimumSize = new Size(Math.Min(1040, area.Width), Math.Min(760, area.Height));
             StartPosition = FormStartPosition.CenterParent;
             Font = new Font("Malgun Gothic", 9F);
             string dataFolder = dataFolderOverride ?? Path.Combine(
@@ -100,6 +102,9 @@ namespace DownloadOrganizer
             if (File.Exists(topicsFile)) topics.Text = File.ReadAllText(topicsFile, Encoding.UTF8);
             BuildUi();
             SoftUi.Apply(this);
+            // Trees sit inside cards, so they draw no border of their own.
+            current.BorderStyle = BorderStyle.None; proposed.BorderStyle = BorderStyle.None;
+            UpdateLocationCards();
             CheckRecovery();
             Shown += delegate
             {
@@ -131,114 +136,176 @@ namespace DownloadOrganizer
         {
             TreeNode node = new TreeNode(label);
             node.Tag = tag; node.ForeColor = color;
-            node.ImageKey = VisualIconKey(tag.Kind);
+            node.ImageKey = VisualIconKey(tag.Kind, label);
+            if (tag.Kind != PlanKind.File && tag.Kind != PlanKind.Hold) node.NodeFont = FolderNodeFont;
             node.SelectedImageKey = node.ImageKey;
             if (tag.OriginalPath != "") node.ToolTipText = tag.OriginalPath;
             return node;
         }
 
+        private static Label TextLabel(string text, float size, FontStyle style, Color color)
+        {
+            return new Label {
+                Text = text, Dock = DockStyle.Fill, AutoEllipsis = true, Margin = new Padding(0),
+                Font = new Font("Malgun Gothic", size, style), ForeColor = color,
+                TextAlign = ContentAlignment.MiddleLeft, BackColor = Color.Transparent
+            };
+        }
+
+        private static Control Divider()
+        {
+            return new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(232, 237, 244), Margin = new Padding(0, 6, 0, 6) };
+        }
+
+        private static Control CardTitle(string title, PillLabel pill)
+        {
+            FlowLayoutPanel row = new FlowLayoutPanel {
+                Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0), BackColor = SoftUi.Surface
+            };
+            row.Controls.Add(new Label {
+                Text = title, AutoSize = true, Margin = new Padding(0, 2, 0, 0),
+                Font = new Font("Malgun Gothic", 15F, FontStyle.Bold), ForeColor = SoftUi.Text
+            });
+            pill.Margin = new Padding(12, 9, 0, 0);
+            row.Controls.Add(pill);
+            return row;
+        }
+
+        private static TableLayoutPanel Rows(params float[] heights)
+        {
+            TableLayoutPanel table = new TableLayoutPanel {
+                Dock = DockStyle.Fill, ColumnCount = 1, RowCount = heights.Length,
+                Margin = new Padding(0), Padding = new Padding(0), BackColor = Color.Transparent
+            };
+            foreach (float height in heights)
+                table.RowStyles.Add(height < 0 ? new RowStyle(SizeType.Percent, 100) :
+                    new RowStyle(SizeType.Absolute, height));
+            return table;
+        }
+
         private void BuildUi()
         {
-            TableLayoutPanel layout = new TableLayoutPanel {
-                Dock = DockStyle.Fill, Padding = new Padding(16), RowCount = 6, ColumnCount = 1
-            };
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+            TableLayoutPanel layout = Rows(70, 110, 112, -1, 160, 26);
+            layout.Padding = new Padding(28, 16, 28, 8);
             Controls.Add(layout);
+            Controls.Add(new AppHeader("폴더 구조 편집"));
 
-            TableLayoutPanel topicArea = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2 };
-            topicArea.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            topicArea.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
-            topicArea.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-            topicArea.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            topicArea.Controls.Add(new Label {
-                Text = "업무·주제 목록 — 한 줄에 하나씩 입력하세요. 예: 예산 또는 업무 > 예산",
-                Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft
-            }, 0, 0);
+            TableLayoutPanel heading = Rows(40, 26);
+            heading.Controls.Add(TextLabel("어디를 정리하는지 먼저 확인하세요", 17F, FontStyle.Bold, SoftUi.Text), 0, 0);
+            heading.Controls.Add(TextLabel("왼쪽은 지금 상태, 오른쪽은 적용 후 모습입니다. '변경 내용 확인·적용'을 누르기 전에는 실제 파일이 바뀌지 않아요.",
+                9.5F, FontStyle.Regular, SoftUi.Muted), 0, 1);
+            layout.Controls.Add(heading, 0, 0);
+
+            TableLayoutPanel places = new TableLayoutPanel {
+                Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = new Padding(0, 0, 0, 12)
+            };
+            places.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            places.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
+            places.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            places.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            sourceCard.Dock = DockStyle.Fill; targetCard.Dock = DockStyle.Fill;
+            places.Controls.Add(sourceCard, 0, 0);
+            places.Controls.Add(new ArrowBadge { Dock = DockStyle.Fill }, 1, 0);
+            places.Controls.Add(targetCard, 2, 0);
+            layout.Controls.Add(places, 0, 1);
+
+            CardPanel toolsCard = new CardPanel { Dock = DockStyle.Fill, Padding = new Padding(20, 10, 20, 14) };
+            TableLayoutPanel tools = new TableLayoutPanel {
+                Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 2, Margin = new Padding(0), BackColor = SoftUi.Surface
+            };
+            tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
+            tools.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
+            tools.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 28));
+            tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
+            tools.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+            tools.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            tools.Controls.Add(TextLabel("업무·주제 목록  ·  한 줄에 하나씩, 예: 예산 또는 업무 > 예산",
+                9F, FontStyle.Bold, SoftUi.Muted), 0, 0);
             topics.Multiline = true; topics.ScrollBars = ScrollBars.Vertical; topics.Dock = DockStyle.Fill;
-            topics.Margin = new Padding(4, 3, 7, 3);
-            topicArea.Controls.Add(topics, 0, 1);
+            topics.Margin = new Padding(0, 2, 10, 0);
+            tools.Controls.Add(topics, 0, 1);
             recommendButton.Text = "추천 구조 만들기"; recommendButton.Dock = DockStyle.Fill;
             recommendButton.Click += delegate { RebuildFromTopics(); };
             suggestTopicsButton.Text = "주제 추천 받기"; suggestTopicsButton.Dock = DockStyle.Fill;
             suggestTopicsButton.Click += delegate { SuggestTopics(); };
-            TableLayoutPanel topicButtons = new TableLayoutPanel {
-                Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, Margin = new Padding(0)
-            };
+            TableLayoutPanel topicButtons = Rows(-1, -1);
+            topicButtons.RowStyles.Clear();
             topicButtons.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             topicButtons.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             topicButtons.Controls.Add(suggestTopicsButton, 0, 0);
             topicButtons.Controls.Add(recommendButton, 0, 1);
-            topicArea.Controls.Add(topicButtons, 1, 1);
-            layout.Controls.Add(topicArea, 0, 0);
-            layout.Controls.Add(CreateSearchBar(), 0, 1);
+            tools.Controls.Add(topicButtons, 1, 0);
+            tools.SetRowSpan(topicButtons, 2);
+            tools.Controls.Add(TextLabel("파일·폴더 찾기", 9F, FontStyle.Bold, SoftUi.Muted), 3, 0);
+            tools.Controls.Add(CreateSearchBar(), 3, 1);
+            toolsCard.Controls.Add(tools);
+            toolsCard.Margin = new Padding(0, 0, 0, 12);
+            layout.Controls.Add(toolsCard, 0, 2);
 
             split.Dock = DockStyle.Fill; split.Orientation = Orientation.Vertical;
-            layout.Controls.Add(split, 0, 2);
-            TableLayoutPanel leftPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
-            leftPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-            leftPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            leftPanel.Controls.Add(new Label {
-                Text = "현재 구조 — 읽기 전용", Dock = DockStyle.Fill,
-                Font = new Font("Malgun Gothic", 9F, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft
-            }, 0, 0);
+            split.SplitterWidth = 18; split.BackColor = SoftUi.Background; split.Margin = new Padding(0, 0, 0, 12);
+            split.Panel1.BackColor = SoftUi.Background; split.Panel2.BackColor = SoftUi.Background;
+            layout.Controls.Add(split, 0, 3);
+
+            CardPanel leftCard = new CardPanel { Dock = DockStyle.Fill, Margin = new Padding(0) };
+            TableLayoutPanel leftBody = Rows(42, 22, 13, -1);
+            leftBody.Controls.Add(CardTitle("현재 구조", new PillLabel("변경 전", SoftDraw.Gray, SoftDraw.GrayInk)), 0, 0);
+            leftBody.Controls.Add(TextLabel("현재 파일이 있는 위치 · 읽기 전용, 항목을 오른쪽으로 끌 수 있어요",
+                9F, FontStyle.Regular, SoftUi.Muted), 0, 1);
+            leftBody.Controls.Add(Divider(), 0, 2);
             current.Dock = DockStyle.Fill; current.HideSelection = false; current.ShowNodeToolTips = true;
+            current.Margin = new Padding(0);
             InitializeVisualTree(current);
             current.ItemDrag += delegate(object sender, ItemDragEventArgs e) { StartDrag((TreeNode)e.Item, true); };
-            leftPanel.Controls.Add(current, 0, 1);
-            split.Panel1.Controls.Add(leftPanel);
+            leftBody.Controls.Add(current, 0, 3);
+            leftCard.Controls.Add(leftBody);
+            split.Panel1.Controls.Add(leftCard);
 
-            TableLayoutPanel rightPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3 };
-            rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-            rightPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            rightPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
-            rightPanel.Controls.Add(new Label {
-                Text = "변경할 구조 — 드래그로 이동, F2로 파일·폴더 이름 수정",
-                Dock = DockStyle.Fill, Font = new Font("Malgun Gothic", 9F, FontStyle.Bold),
-                TextAlign = ContentAlignment.MiddleLeft
-            }, 0, 0);
+            CardPanel rightCard = new CardPanel { Dock = DockStyle.Fill, Margin = new Padding(0) };
+            TableLayoutPanel rightBody = Rows(42, 22, 42, 13, -1, 40);
+            rightBody.Controls.Add(CardTitle("변경 후 미리보기", new PillLabel("아직 적용 전", SoftDraw.GreenSoft, SoftDraw.GreenInk)), 0, 0);
+            rightBody.Controls.Add(TextLabel("파일과 폴더를 끌어 놓아 수정할 수 있어요 · F2로 이름 수정",
+                9F, FontStyle.Regular, SoftUi.Muted), 0, 1);
+            FlowLayoutPanel editTools = new FlowLayoutPanel {
+                Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0), BackColor = SoftUi.Surface
+            };
+            addButton.Text = "새 폴더"; addButton.Width = 88; addButton.Height = 32;
+            addButton.Click += AddFolder;
+            renameButton.Text = "이름 변경"; renameButton.Width = 92; renameButton.Height = 32;
+            renameButton.Click += delegate { RenameSelected(); };
+            batchRenameButton.Text = "일괄 이름 변경"; batchRenameButton.Width = 120; batchRenameButton.Height = 32;
+            batchRenameButton.Click += delegate { ShowBatchRename(); };
+            removeButton.Text = "빈 폴더 제거"; removeButton.Width = 110; removeButton.Height = 32;
+            removeButton.Click += RemoveFolder;
+            resetButton.Text = "처음 구조로"; resetButton.Width = 104; resetButton.Height = 32;
+            resetButton.Click += delegate { RebuildFromTopics(); };
+            foreach (Button button in new[] { addButton, renameButton, batchRenameButton, removeButton, resetButton })
+            { button.Margin = new Padding(0, 5, 8, 0); editTools.Controls.Add(button); }
+            rightBody.Controls.Add(editTools, 0, 2);
+            rightBody.Controls.Add(Divider(), 0, 3);
             proposed.Dock = DockStyle.Fill; proposed.HideSelection = false;
-            proposed.ShowNodeToolTips = true; proposed.AllowDrop = true;
+            proposed.ShowNodeToolTips = true; proposed.AllowDrop = true; proposed.Margin = new Padding(0);
             InitializeVisualTree(proposed);
             proposed.ItemDrag += delegate(object sender, ItemDragEventArgs e) { StartDrag((TreeNode)e.Item, false); };
             proposed.DragEnter += DragOverPlan;
             proposed.DragOver += DragOverPlan;
             proposed.DragLeave += delegate { ClearDragTarget(); };
             proposed.DragDrop += DropOnPlan;
-            rightPanel.Controls.Add(proposed, 0, 1);
-            rightPanel.Controls.Add(CreateDragGuide(), 0, 2);
-            split.Panel2.Controls.Add(rightPanel);
-            layout.Controls.Add(CreateSelectionBar(), 0, 3);
+            rightBody.Controls.Add(proposed, 0, 4);
+            rightBody.Controls.Add(CreateDragGuide(), 0, 5);
+            rightCard.Controls.Add(rightBody);
+            split.Panel2.Controls.Add(rightCard);
 
-            FlowLayoutPanel buttons = new FlowLayoutPanel {
-                Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false
-            };
-            Button close = new SoftButton { Text = "닫기", Width = 90, Height = 34 };
+            Button close = new SoftButton { Text = "닫기", Width = 96, Height = 40 };
             close.Click += delegate { Close(); };
-            applyButton.Text = "변경 내용 확인·적용"; applyButton.Width = 165; applyButton.Height = 34;
+            applyButton.Text = "변경 내용 확인 · 적용"; applyButton.Width = 230; applyButton.Height = 40;
             ((SoftButton)applyButton).Primary = true;
             applyButton.Click += ApplyClicked;
-            removeButton.Text = "빈 폴더 제거"; removeButton.Width = 120; removeButton.Height = 34;
-            removeButton.Click += RemoveFolder;
-            addButton.Text = "새 폴더"; addButton.Width = 95; addButton.Height = 34;
-            addButton.Click += AddFolder;
-            renameButton.Text = "이름 변경"; renameButton.Width = 95; renameButton.Height = 34;
-            renameButton.Click += delegate { RenameSelected(); };
-            batchRenameButton.Text = "일괄 이름 변경"; batchRenameButton.Width = 125; batchRenameButton.Height = 34;
-            batchRenameButton.Click += delegate { ShowBatchRename(); };
-            resetButton.Text = "처음 구조로"; resetButton.Width = 115; resetButton.Height = 34;
-            resetButton.Click += delegate { RebuildFromTopics(); };
-            buttons.Controls.Add(close); buttons.Controls.Add(applyButton); buttons.Controls.Add(removeButton);
-            buttons.Controls.Add(batchRenameButton); buttons.Controls.Add(renameButton);
-            buttons.Controls.Add(addButton); buttons.Controls.Add(resetButton);
-            layout.Controls.Add(buttons, 0, 4);
+            layout.Controls.Add(CreateSelectionCard(applyButton, close), 0, 4);
+
             status.Text = "오른쪽 구조를 고친 뒤 변경 내용을 확인하고 적용하세요.";
             status.Dock = DockStyle.Fill; status.TextAlign = ContentAlignment.MiddleLeft;
-            status.AutoEllipsis = true;
+            status.AutoEllipsis = true; status.ForeColor = SoftUi.Muted;
             statusLine.Dock = DockStyle.Fill; statusLine.RowCount = 1;
             statusLine.ColumnCount = 2; statusLine.Margin = new Padding(0);
             statusLine.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -251,7 +318,7 @@ namespace DownloadOrganizer
 
             helpTips.SetToolTip(topics, "업무나 주제를 한 줄에 하나씩 적습니다. '업무 > 예산'처럼 하위 폴더도 지정할 수 있습니다.");
             helpTips.SetToolTip(recommendButton, "입력한 주제로 오른쪽 추천 구조를 다시 만듭니다.");
-            helpTips.SetToolTip(suggestTopicsButton, "감시 폴더의 하위 폴더 이름과 파일 이름을 보고 주제 목록을 추천합니다. 고른 뒤 직접 고칠 수 있습니다.");
+            helpTips.SetToolTip(suggestTopicsButton, "감시 폴더 바로 아래 파일 이름을 보고 주제 목록을 추천합니다. 고른 뒤 직접 고칠 수 있습니다.");
             helpTips.SetToolTip(current, "현재 폴더와 파일 목록입니다. 폴더 옆 숫자는 하위 폴더까지 포함한 파일 수입니다. 항목을 오른쪽으로 끌 수 있습니다.");
             helpTips.SetToolTip(proposed, "추천 구조입니다. 폴더 옆 숫자는 하위 폴더까지 포함한 파일 수입니다. 파일이나 폴더를 끌어 위치를 바꿀 수 있습니다.");
             helpTips.SetToolTip(addButton, "오른쪽에서 선택한 폴더 안에 새 폴더를 추가합니다.");
@@ -261,6 +328,8 @@ namespace DownloadOrganizer
             helpTips.SetToolTip(resetButton, "오른쪽의 수정 내용을 버리고 추천 구조를 다시 만듭니다.");
             helpTips.SetToolTip(applyButton, "변경할 파일과 폴더 수를 확인한 뒤 실제 구조에 적용합니다.");
             helpTips.SetToolTip(close, "파일과 폴더를 바꾸지 않고 창을 닫습니다.");
+            helpTips.SetToolTip(sourceCard, "감시 폴더: " + source);
+            helpTips.SetToolTip(targetCard, "정리할 상위 폴더: " + root);
         }
 
         private void CheckRecovery()
@@ -297,10 +366,10 @@ namespace DownloadOrganizer
                         FromDownloads = true };
                     TreeNode left = new TreeNode(Path.GetFileName(child));
                     left.Tag = tag; left.ImageKey = "folder"; left.SelectedImageKey = "folder";
-                    left.ForeColor = Color.DimGray; left.ToolTipText = path;
+                    left.ForeColor = Color.DimGray; left.ToolTipText = path; left.NodeFont = FolderNodeFont;
                     TreeNode right = new TreeNode(Path.GetFileName(child));
                     right.Tag = tag; right.ImageKey = "folder"; right.SelectedImageKey = "folder";
-                    right.ForeColor = Color.DimGray; right.ToolTipText = path;
+                    right.ForeColor = Color.DimGray; right.ToolTipText = path; right.NodeFont = FolderNodeFont;
                     leftParent.Nodes.Add(left); rightParent.Nodes.Add(right);
                     leftFolders.Add(path, left); rightFolders.Add(path, right);
                     if (leftFolders.Count > 10000)

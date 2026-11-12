@@ -21,6 +21,8 @@
 - `MainForm.Async.cs`, `MainForm.Tray.cs`: background scans, watcher, retries, tray lifecycle.
 - `StructureEditor*.cs`: two-tree plan editor, selection, visuals, drag, rename.
 - `TopicSuggester.cs`, `TopicSuggestionForm.cs`: topic-list suggestions and the review dialog.
+- `SoftUi.cs`: shared colors plus card controls (`CardPanel`, `LocationCard`, `PillLabel`, `ArrowBadge`, `AppHeader`). The structure editor trees use `OwnerDrawAll`; row positions are derived from native `node.Bounds` so hit-testing (chevron, icon, label) stays native. Tests rely on node `BackColor` for drop/search state and on `selectedPathLabel`/`dragGuide` text, so keep those.
+- Unhandled UI exceptions are appended to `%LocalAppData%\DownloadOrganizer\error.log` (`Engine.LogError`); ask the user for that file when they report an error dialog.
 - `StructurePlanner.cs`: validates snapshots, stages file moves, rolls back failures, handles target-root rename.
 - `ChangeJournal.cs`, `HistoryForm.cs`: item history and undo.
 - `*.Smoke.cs`: focused integration checks; use `FolderRename.Smoke.cs` for root and child folder rename and undo.

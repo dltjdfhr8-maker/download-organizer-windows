@@ -21,11 +21,11 @@ namespace DownloadOrganizer
         private Control CreateDragGuide()
         {
             dragGuide.Dock = DockStyle.Fill;
-            dragGuide.Margin = new Padding(0, 3, 0, 0);
-            dragGuide.Padding = new Padding(8, 0, 8, 0);
+            dragGuide.Margin = new Padding(0, 6, 0, 0);
+            dragGuide.Padding = new Padding(10, 0, 10, 0);
             dragGuide.TextAlign = ContentAlignment.MiddleLeft;
             dragGuide.AutoEllipsis = true;
-            dragGuide.BorderStyle = BorderStyle.FixedSingle;
+            dragGuide.BorderStyle = BorderStyle.None;
             ResetDragGuide();
             dragExpandTimer.Tick += delegate
             {

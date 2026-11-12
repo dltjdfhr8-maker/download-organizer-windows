@@ -52,7 +52,8 @@ namespace DownloadOrganizer
                     TreeView tree = (TreeView)field.GetValue(editor);
                     FieldInfo currentField = typeof(StructureEditor).GetField("current", BindingFlags.NonPublic | BindingFlags.Instance);
                     TreeView currentTree = (TreeView)currentField.GetValue(editor);
-                    if (tree.ImageList == null || tree.ImageList.Images.Count != 2 ||
+                    if (tree.ImageList == null || !tree.ImageList.Images.ContainsKey("folder") ||
+                        !tree.ImageList.Images.ContainsKey("file") || !tree.ImageList.Images.ContainsKey("file-pdf") ||
                         currentTree.ImageList != tree.ImageList)
                         throw new Exception("폴더·파일 아이콘 표시 실패");
                     TextBox search = (TextBox)typeof(StructureEditor).GetField("searchBox",
