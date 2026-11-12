@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
 
@@ -13,6 +14,9 @@ namespace DownloadOrganizer
         private TreeView pendingPlainClickTree;
         private TreeNode pendingPlainClickNode;
         private TreeNode lastChosenNode;
+        private TreeView pendingFolderDragTree;
+        private TreeNode pendingFolderDragNode;
+        private Point pendingFolderDragStart;
 
         private HashSet<TreeNode> SelectedFiles(TreeView tree)
         {
@@ -43,9 +47,20 @@ namespace DownloadOrganizer
             }
         }
 
+        private static TreeNode RowNodeAt(TreeView tree, Point point)
+        {
+            TreeNode hit = tree.GetNodeAt(point);
+            if (hit != null) return hit;
+            if (point.X < 0 || point.X >= tree.ClientSize.Width ||
+                point.Y < 0 || point.Y >= tree.ClientSize.Height) return null;
+            return VisibleNodes(tree).FirstOrDefault(node => !node.Bounds.IsEmpty &&
+                point.Y >= node.Bounds.Top && point.Y < node.Bounds.Bottom);
+        }
+
         private void HookFileSelection(TreeView tree)
         {
             tree.MouseDown += HandleFileMouseDown;
+            tree.MouseMove += HandleFolderMouseMove;
             tree.MouseUp += HandleFileMouseUp;
             tree.KeyDown += delegate(object sender, KeyEventArgs e)
             {
@@ -60,19 +75,33 @@ namespace DownloadOrganizer
         {
             if (!Loaded || e.Button != MouseButtons.Left) return;
             TreeView tree = (TreeView)sender;
+            pendingFolderDragTree = null;
+            pendingFolderDragNode = null;
             TreeViewHitTestInfo hit = tree.HitTest(e.Location);
-            if (hit.Node == null) { ClearSelectedFiles(); return; }
-            if ((hit.Location & (TreeViewHitTestLocations.Label |
-                TreeViewHitTestLocations.Image | TreeViewHitTestLocations.RightOfLabel)) == 0) return;
-            TreeNode node = hit.Node;
+            TreeNode node = hit.Node ?? RowNodeAt(tree, e.Location);
+            if (node == null) { ClearSelectedFiles(); return; }
+            bool nativeDragArea = (hit.Location & (TreeViewHitTestLocations.Label |
+                TreeViewHitTestLocations.Image)) != 0;
+            bool rowDragArea = e.X >= node.Bounds.Left - IconSize - 3;
+            if (!nativeDragArea && !rowDragArea) return;
             if (NodeTag(node) == null || NodeTag(node).Kind != PlanKind.File)
             {
                 ClearSelectedFiles();
                 lastChosenNode = node;
                 tree.SelectedNode = node;
                 UpdateSelectionDetails();
+                PlanTag tag = NodeTag(node);
+                if (!nativeDragArea && tag != null &&
+                    (tag.Kind == PlanKind.Folder || tag.Kind == PlanKind.SourceFolder))
+                {
+                    pendingFolderDragTree = tree;
+                    pendingFolderDragNode = node;
+                    pendingFolderDragStart = e.Location;
+                }
                 return;
             }
+            if (!nativeDragArea && (hit.Location & TreeViewHitTestLocations.RightOfLabel) == 0)
+                return;
             lastChosenNode = node;
             bool shift = (Control.ModifierKeys & Keys.Shift) != 0;
             bool control = (Control.ModifierKeys & Keys.Control) != 0;
@@ -92,6 +121,8 @@ namespace DownloadOrganizer
 
         private void HandleFileMouseUp(object sender, MouseEventArgs e)
         {
+            pendingFolderDragTree = null;
+            pendingFolderDragNode = null;
             if (e.Button != MouseButtons.Left || pendingPlainClickTree != sender ||
                 pendingPlainClickNode == null) return;
             TreeView tree = (TreeView)sender;
@@ -100,6 +131,26 @@ namespace DownloadOrganizer
             pendingPlainClickTree = null;
             pendingPlainClickNode = null;
             if (clicked == pending) UpdateFileSelection(tree, pending, false, false);
+        }
+
+        private void HandleFolderMouseMove(object sender, MouseEventArgs e)
+        {
+            if (pendingFolderDragTree != sender || pendingFolderDragNode == null) return;
+            if (e.Button != MouseButtons.Left)
+            {
+                pendingFolderDragTree = null;
+                pendingFolderDragNode = null;
+                return;
+            }
+            Size size = SystemInformation.DragSize;
+            Rectangle hold = new Rectangle(pendingFolderDragStart.X - size.Width / 2,
+                pendingFolderDragStart.Y - size.Height / 2, size.Width, size.Height);
+            if (hold.Contains(e.Location)) return;
+            TreeView tree = pendingFolderDragTree;
+            TreeNode node = pendingFolderDragNode;
+            pendingFolderDragTree = null;
+            pendingFolderDragNode = null;
+            StartDrag(node, tree == current);
         }
 
         private void UpdateFileSelection(TreeView tree, TreeNode node, bool shift, bool control)

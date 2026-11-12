@@ -26,6 +26,10 @@ namespace DownloadOrganizer
                 string nestedSource = Path.Combine(source, "받은 묶음");
                 Directory.CreateDirectory(nestedSource);
                 Directory.CreateDirectory(Path.Combine(nestedSource, "빈 폴더"));
+                string classFolder = Path.Combine(nestedSource, "수강생배포");
+                Directory.CreateDirectory(classFolder);
+                File.WriteAllText(Path.Combine(classFolder, "수강생자료.txt"), "class");
+                File.SetLastWriteTimeUtc(Path.Combine(classFolder, "수강생자료.txt"), DateTime.UtcNow.AddSeconds(-10));
                 File.WriteAllText(Path.Combine(data, "topics.txt"), "업무 > 예산\n연수", Encoding.UTF8);
                 File.WriteAllText(Path.Combine(root, "기존", "기존자료.txt"), "old");
                 File.WriteAllText(Path.Combine(source, "예산_안내.txt"), "incoming");
@@ -153,8 +157,55 @@ namespace DownloadOrganizer
                     drop.Invoke(editor, new object[] { tree, leftDrop });
                     if (Find(training, "드래그파일.txt") == null)
                         throw new Exception("왼쪽에서 오른쪽으로 드래그 실패");
+                    training.EnsureVisible();
+                    Application.DoEvents();
+                    Point folderSourcePoint = new Point(tree.ClientSize.Width - 12,
+                        training.Bounds.Top + training.Bounds.Height / 2);
+                    MouseEventArgs folderMouse = new MouseEventArgs(MouseButtons.Left, 1,
+                        folderSourcePoint.X, folderSourcePoint.Y, 0);
+                    typeof(StructureEditor).GetMethod("HandleFileMouseDown", BindingFlags.NonPublic |
+                        BindingFlags.Instance).Invoke(editor, new object[] { tree, folderMouse });
+                    TreeNode pendingFolder = (TreeNode)typeof(StructureEditor).GetField("pendingFolderDragNode",
+                        BindingFlags.NonPublic | BindingFlags.Instance).GetValue(editor);
+                    if (pendingFolder != training)
+                        throw new Exception("폴더 행의 빈 부분에서 드래그 준비 실패");
+                    typeof(StructureEditor).GetMethod("HandleFileMouseUp", BindingFlags.NonPublic |
+                        BindingFlags.Instance).Invoke(editor, new object[] { tree, folderMouse });
+                    existing.EnsureVisible();
+                    Application.DoEvents();
+                    Rectangle folderTargetBounds = existing.Bounds;
+                    Point folderTargetPoint = tree.PointToScreen(new Point(tree.ClientSize.Width - 12,
+                        folderTargetBounds.Top + folderTargetBounds.Height / 2));
+                    DragEventArgs folderDrop = new DragEventArgs(
+                        new DataObject(new DraggedNode { Node = training, FromLeft = false }), 0,
+                        folderTargetPoint.X, folderTargetPoint.Y, DragDropEffects.Move, DragDropEffects.Move);
+                    dragOver.Invoke(editor, new object[] { tree, folderDrop });
+                    if (folderDrop.Effect != DragDropEffects.Move ||
+                        !dragGuide.Text.Contains("연수") || !dragGuide.Text.Contains("기존"))
+                        throw new Exception("오른쪽 폴더 드래그 목적지 안내 실패");
+                    drop.Invoke(editor, new object[] { tree, folderDrop });
+                    if (training.Parent != existing || Find(training, "드래그파일.txt") == null)
+                        throw new Exception("오른쪽 폴더 전체 이동 실패");
+                    if (!editor.MovePlannedNode(training, planRoot))
+                        throw new Exception("옮긴 폴더를 상위 폴더로 되돌리기 실패");
                     if (editor.MovePlannedNode(business, budget))
                         throw new Exception("폴더 순환 이동 방지 실패");
+                    TreeNode classSource = Find(rightNested, "수강생배포");
+                    if (classSource == null) throw new Exception("감시 하위 폴더 표시 실패");
+                    budget.EnsureVisible();
+                    Application.DoEvents();
+                    Rectangle classTargetBounds = budget.Bounds;
+                    Point classTargetPoint = tree.PointToScreen(new Point(tree.ClientSize.Width - 12,
+                        classTargetBounds.Top + classTargetBounds.Height / 2));
+                    DragEventArgs classDrop = new DragEventArgs(
+                        new DataObject(new DraggedNode { Node = classSource, FromLeft = false }), 0,
+                        classTargetPoint.X, classTargetPoint.Y, DragDropEffects.Move, DragDropEffects.Move);
+                    dragOver.Invoke(editor, new object[] { tree, classDrop });
+                    if (classDrop.Effect != DragDropEffects.Move)
+                        throw new Exception("감시 하위 폴더의 중첩 목적지 드래그 실패: " + dragGuide.Text);
+                    drop.Invoke(editor, new object[] { tree, classDrop });
+                    if (Find(Find(budget, "수강생배포"), "수강생자료.txt") == null)
+                        throw new Exception("감시 하위 폴더를 중첩 목적지로 배치 실패");
                     budget.EnsureVisible();
                     Application.DoEvents();
                     Point invalidPoint = tree.PointToScreen(new Point(budget.Bounds.Left + 8,
@@ -192,8 +243,9 @@ namespace DownloadOrganizer
                     FieldInfo snapshotField = typeof(StructureEditor).GetField("snapshot", BindingFlags.NonPublic | BindingFlags.Instance);
                     StructureSnapshot snapshot = (StructureSnapshot)snapshotField.GetValue(editor);
                     ApplySummary summary = StructurePlanner.Apply(root, source, snapshot, plan.Files, plan.Directories);
-                    if (summary.FilesMoved != 4 ||
+                    if (summary.FilesMoved != 5 ||
                         !File.Exists(Path.Combine(root, "업무", "예산", "예산_안내.txt")) ||
+                        !File.Exists(Path.Combine(root, "업무", "예산", "수강생배포", "수강생자료.txt")) ||
                         !File.Exists(Path.Combine(root, "연수", "기존자료.txt")) ||
                         !File.Exists(Path.Combine(root, "연수", "드래그파일.txt")) ||
                         !File.Exists(Path.Combine(root, "연수", "하위드래그파일.txt")) ||

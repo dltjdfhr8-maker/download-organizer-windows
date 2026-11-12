@@ -718,7 +718,7 @@ namespace DownloadOrganizer
         private TreeNode DropTarget(DragEventArgs e)
         {
             Point point = proposed.PointToClient(new Point(e.X, e.Y));
-            TreeNode target = proposed.GetNodeAt(point);
+            TreeNode target = RowNodeAt(proposed, point);
             if (target == null) return null;
             return IsFolder(target) ? target : target.Parent;
         }
