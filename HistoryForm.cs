@@ -108,8 +108,10 @@ namespace DownloadOrganizer
 
         private static string DisplayKind(ChangeRecord record)
         {
-            return record.Kind == "파일 이동" && record.Reason == "파일 이름 변경" ?
-                "이름 변경" : record.Kind;
+            if (record.Kind == "파일 이동" && record.Reason == "파일 이름 변경") return "이름 변경";
+            if (record.Kind == "폴더 이동" && record.Reason == ChangeJournal.RootRenameReason)
+                return ChangeJournal.RootRenameReason;
+            return record.Kind;
         }
 
         private void RefreshVisible()

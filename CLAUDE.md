@@ -31,4 +31,6 @@
 - Preserve no-overwrite behavior, the download-complete check, plan preview before apply, and rollback/undo safety.
 - Watch folder subdirectories are shown as grouping nodes; their files can be moved, while the source folder itself is not renamed in the structure editor.
 - The target root and child folders can be renamed. Root rename must update saved paths and watcher state; test separate-folder and same-folder modes and history undo.
-- Root rename combined with other folder rearrangements should receive additional end-to-end undo testing before changing that flow. OneDrive sync and large real folder trees also need user-environment testing.
+- Root rename is journaled as a `폴더 이동` record with Reason `ChangeJournal.RootRenameReason`. While it is not undone, undo targets under the old root resolve under the current root (`ChangeJournal.ResolveOriginal`), so the old root is never recreated. `FolderRename.Smoke.cs` covers root + child rename + file move with both undo orders. Undo across several sequential root renames and persisted (reloaded) journals is not yet smoke-tested.
+- `MainForm.Burst.Smoke.cs` and the F2-dialog step at the start of `FolderRename.Smoke.cs` are timing-sensitive; each failed once in several runs on 2026-11-12. Rerun before treating a failure as a regression.
+- OneDrive sync and large real folder trees still need user-environment testing.

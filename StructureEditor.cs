@@ -39,6 +39,7 @@ namespace DownloadOrganizer
     internal class FolderDelta
     {
         public string From = "", To = "";
+        public string Reason = "";
     }
 
     internal class StructureApplyProgress
@@ -792,7 +793,9 @@ namespace DownloadOrganizer
                     From = folder.From,
                     To = folder.To == "" ? "" : StructurePlanner.RemapRoot(folder.To, root, newRoot)
                 });
-            historyPlan.FolderChanges.Add(new FolderDelta { From = root, To = newRoot });
+            historyPlan.FolderChanges.Add(new FolderDelta {
+                From = root, To = newRoot, Reason = ChangeJournal.RootRenameReason
+            });
             return historyPlan;
         }
 

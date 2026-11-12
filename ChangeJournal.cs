@@ -23,7 +23,35 @@ namespace DownloadOrganizer
 
     public class ChangeJournal
     {
+        public const string RootRenameReason = "상위 폴더 이름 변경";
         public List<ChangeRecord> Records = new List<ChangeRecord>();
+
+        // While a target-root rename is still applied, paths recorded under the old root
+        // live under the new root. Resolve them there instead of recreating the old root.
+        private string ResolveOriginal(ChangeRecord self, string path)
+        {
+            if (String.IsNullOrEmpty(path)) return path;
+            string resolved = Engine.Full(path);
+            for (int guard = 0; guard <= Records.Count; guard++)
+            {
+                ChangeRecord rename = Records.LastOrDefault(r => r != self && !r.Undone &&
+                    r.Kind == "폴더 이동" && r.Reason == RootRenameReason &&
+                    !Engine.Full(r.From).Equals(resolved, StringComparison.OrdinalIgnoreCase) &&
+                    Engine.SameOrInside(resolved, r.From) &&
+                    Directory.Exists(r.Current == "" ? r.To : r.Current));
+                if (rename == null) return resolved;
+                resolved = StructurePlanner.RemapRoot(resolved, rename.From,
+                    rename.Current == "" ? rename.To : rename.Current);
+            }
+            return resolved;
+        }
+
+        private void RemapCurrent(ChangeRecord self, string oldPath, string newPath)
+        {
+            foreach (ChangeRecord r in Records)
+                if (r != self && r.Current != "" && Engine.SameOrInside(r.Current, oldPath))
+                    r.Current = StructurePlanner.RemapRoot(r.Current, oldPath, newPath);
+        }
 
         public ChangeRecord AddFile(string from, string to, long length, long ticks,
             string when, string reason, string groupId)
@@ -63,7 +91,8 @@ namespace DownloadOrganizer
                 ChangeRecord record = new ChangeRecord {
                     Id = Guid.NewGuid().ToString("N"), GroupId = groupId,
                     Kind = kind, From = folder.From, To = folder.To,
-                    Current = folder.To, When = when, Reason = "구조 편집"
+                    Current = folder.To, When = when,
+                    Reason = folder.Reason == "" ? "구조 편집" : folder.Reason
                 };
                 record.RelatedFileIds = fileRecords
                     .Where(f => folder.To != "" ? Engine.SameOrInside(f.To, folder.To) :
@@ -71,6 +100,11 @@ namespace DownloadOrganizer
                     .Select(f => f.Id).ToList();
                 Records.Add(record);
             }
+            // Earlier history now lives under the renamed root.
+            foreach (FolderDelta folder in plan.FolderChanges.Where(f => f.Reason == RootRenameReason))
+                for (int i = 0; i < previousCount; i++)
+                    if (Records[i].Current != "" && Engine.SameOrInside(Records[i].Current, folder.From))
+                        Records[i].Current = StructurePlanner.RemapRoot(Records[i].Current, folder.From, folder.To);
             }
             catch
             {
@@ -104,23 +138,24 @@ namespace DownloadOrganizer
             if (pending.Count == 0) throw new IOException("이 작업에서 되돌릴 파일 이름이 없습니다.");
             HashSet<string> currentPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             HashSet<string> originalPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<ChangeRecord, string> targets = pending.ToDictionary(r => r, r => ResolveOriginal(r, r.From));
             foreach (ChangeRecord record in pending)
             {
                 string current = record.Current == "" ? record.To : record.Current;
-                if (!currentPaths.Add(current) || !originalPaths.Add(record.From))
+                if (!currentPaths.Add(current) || !originalPaths.Add(targets[record]))
                     throw new IOException("이력에 같은 파일 경로가 두 번 기록되어 있습니다.");
                 if (!File.Exists(current))
                     throw new IOException("현재 위치에 파일이 없습니다: " + current);
                 FileInfo info = new FileInfo(current);
                 if (info.Length != record.Length || info.LastWriteTimeUtc.Ticks != record.LastWriteTicks)
                     throw new IOException("파일이 변경되어 자동으로 되돌릴 수 없습니다: " + current);
-                if (!Directory.Exists(Path.GetDirectoryName(record.From)))
-                    throw new IOException("원래 폴더가 없어 이름을 되돌릴 수 없습니다: " + record.From);
+                if (!Directory.Exists(Path.GetDirectoryName(targets[record])))
+                    throw new IOException("원래 폴더가 없어 이름을 되돌릴 수 없습니다: " + targets[record]);
             }
             foreach (ChangeRecord record in pending)
-                if (Directory.Exists(record.From) ||
-                    (File.Exists(record.From) && !currentPaths.Contains(record.From)))
-                    throw new IOException("원래 이름에 다른 항목이 있습니다: " + record.From);
+                if (Directory.Exists(targets[record]) ||
+                    (File.Exists(targets[record]) && !currentPaths.Contains(targets[record])))
+                    throw new IOException("원래 이름에 다른 항목이 있습니다: " + targets[record]);
 
             Dictionary<ChangeRecord, string> stages = new Dictionary<ChangeRecord, string>();
             List<ChangeRecord> restored = new List<ChangeRecord>();
@@ -138,13 +173,13 @@ namespace DownloadOrganizer
                 }
                 foreach (ChangeRecord record in pending)
                 {
-                    if (File.Exists(record.From) || Directory.Exists(record.From))
-                        throw new IOException("되돌리는 중 원래 이름에 다른 항목이 생겼습니다: " + record.From);
-                    File.Move(stages[record], record.From);
+                    if (File.Exists(targets[record]) || Directory.Exists(targets[record]))
+                        throw new IOException("되돌리는 중 원래 이름에 다른 항목이 생겼습니다: " + targets[record]);
+                    File.Move(stages[record], targets[record]);
                     restored.Add(record);
                 }
                 foreach (ChangeRecord record in pending)
-                { record.Current = record.From; record.Undone = true; }
+                { record.Current = targets[record]; record.Undone = true; }
                 return pending;
             }
             catch (Exception error)
@@ -154,8 +189,8 @@ namespace DownloadOrganizer
                 {
                     try
                     {
-                        if (File.Exists(record.From) && !File.Exists(stages[record]))
-                            File.Move(record.From, stages[record]);
+                        if (File.Exists(targets[record]) && !File.Exists(stages[record]))
+                            File.Move(targets[record], stages[record]);
                     }
                     catch (Exception ex) { failures.Add(ex.Message); }
                 }
@@ -183,11 +218,14 @@ namespace DownloadOrganizer
             FileInfo info = new FileInfo(current);
             if (info.Length != record.Length || info.LastWriteTimeUtc.Ticks != record.LastWriteTicks)
                 throw new IOException("파일이 변경되어 자동으로 되돌릴 수 없습니다: " + current);
-            if (File.Exists(record.From) || Directory.Exists(record.From))
-                throw new IOException("이전 위치에 같은 이름의 항목이 있습니다: " + record.From);
-            Directory.CreateDirectory(Path.GetDirectoryName(record.From));
-            File.Move(current, record.From);
-            record.Current = record.From; record.Undone = true;
+            string target = ResolveOriginal(record, record.From);
+            if (Engine.Full(target).Equals(Engine.Full(current), StringComparison.OrdinalIgnoreCase))
+                throw new IOException("이 파일은 이미 원래 폴더에 있습니다. 상위 폴더 이름 변경 이력을 되돌리면 완료됩니다: " + current);
+            if (File.Exists(target) || Directory.Exists(target))
+                throw new IOException("이전 위치에 같은 이름의 항목이 있습니다: " + target);
+            Directory.CreateDirectory(Path.GetDirectoryName(target));
+            File.Move(current, target);
+            record.Current = target; record.Undone = true;
             return (record.Reason == "파일 이름 변경" ? "파일 이름을 되돌렸습니다: " :
                 "파일을 이전 위치로 돌렸습니다: ") + Path.GetFileName(record.From);
         }
@@ -204,27 +242,28 @@ namespace DownloadOrganizer
 
         private string UndoRemovedFolder(ChangeRecord record)
         {
-            if (File.Exists(record.From))
-                throw new IOException("이전 위치에 이미 파일이 있습니다: " + record.From);
-            if (Directory.Exists(record.From))
+            string target = ResolveOriginal(record, record.From);
+            if (File.Exists(target))
+                throw new IOException("이전 위치에 이미 파일이 있습니다: " + target);
+            if (Directory.Exists(target))
             {
                 List<ChangeRecord> related = record.RelatedFileIds
                     .Select(id => Records.FirstOrDefault(r => r.Id == id)).ToList();
                 if (related.Count == 0 || related.Any(r => r == null || !r.Undone ||
-                    !Engine.SameOrInside(r.Current, record.From)))
-                    throw new IOException("이전 위치에 이미 폴더가 있습니다: " + record.From);
+                    !Engine.SameOrInside(r.Current, target)))
+                    throw new IOException("이전 위치에 이미 폴더가 있습니다: " + target);
                 HashSet<string> expected = new HashSet<string>(
                     related.Select(r => Engine.Full(r.Current)), StringComparer.OrdinalIgnoreCase);
-                if (!StructurePlanner.ScanTarget(record.From).TargetFiles.SetEquals(expected))
+                if (!StructurePlanner.ScanTarget(target).TargetFiles.SetEquals(expected))
                     throw new IOException("복구된 폴더에 다른 파일이 있어 이력을 완료할 수 없습니다.");
-                record.Undone = true; record.Current = record.From;
-                return "파일 복구로 다시 생긴 폴더의 이력을 완료했습니다: " + record.From;
+                record.Undone = true; record.Current = target;
+                return "파일 복구로 다시 생긴 폴더의 이력을 완료했습니다: " + target;
             }
-            if (!Directory.Exists(Path.GetDirectoryName(record.From)))
-                throw new IOException("상위 폴더를 먼저 되돌리세요: " + record.From);
-            Directory.CreateDirectory(record.From);
-            record.Undone = true; record.Current = record.From;
-            return "이전에 있던 폴더를 다시 만들었습니다: " + record.From;
+            if (!Directory.Exists(Path.GetDirectoryName(target)))
+                throw new IOException("상위 폴더를 먼저 되돌리세요: " + target);
+            Directory.CreateDirectory(target);
+            record.Undone = true; record.Current = target;
+            return "이전에 있던 폴더를 다시 만들었습니다: " + target;
         }
 
         private string UndoMovedFolder(ChangeRecord record)
@@ -238,42 +277,42 @@ namespace DownloadOrganizer
                 .Select(id => Records.FirstOrDefault(r => r.Id == id)).ToList();
             if (related.Any(r => r == null))
                 throw new IOException("관련 파일 이력을 찾을 수 없습니다.");
-            bool originalExists = Directory.Exists(record.From) || File.Exists(record.From);
+            string target = ResolveOriginal(record, record.From);
+            bool originalExists = Directory.Exists(target) || File.Exists(target);
             if (originalExists)
             {
-                if (!Directory.Exists(record.From) || related.Count == 0 ||
-                    related.Any(r => !r.Undone || !Engine.SameOrInside(r.Current, record.From)) ||
+                if (!Directory.Exists(target) || related.Count == 0 ||
+                    related.Any(r => !r.Undone || !Engine.SameOrInside(r.Current, target)) ||
                     Directory.GetFileSystemEntries(current).Length != 0)
-                    throw new IOException("이전 위치에 이미 항목이 있습니다: " + record.From);
+                    throw new IOException("이전 위치에 이미 항목이 있습니다: " + target);
                 Directory.Delete(current);
-                record.Current = record.From; record.Undone = true;
-                return "빈 폴더를 정리했습니다. 파일은 이미 이전 위치에 있습니다: " + record.From;
+                record.Current = target; record.Undone = true;
+                return "빈 폴더를 정리했습니다. 파일은 이미 이전 위치에 있습니다: " + target;
             }
-            if (related.Any(r => r.Undone))
-                throw new IOException("관련 파일 일부가 이미 되돌려졌습니다. 나머지 파일도 먼저 되돌리세요.");
+            // Files already undone out of this folder no longer travel with it; anything
+            // still inside (including files restored within a renamed root) must match exactly.
+            List<ChangeRecord> inside = related.Where(r => !r.Undone ||
+                Engine.SameOrInside(r.Current, current)).ToList();
             HashSet<string> expected = new HashSet<string>(
-                related.Select(r => Engine.Full(r.Current)), StringComparer.OrdinalIgnoreCase);
+                inside.Select(r => Engine.Full(r.Current)), StringComparer.OrdinalIgnoreCase);
             HashSet<string> actual = StructurePlanner.ScanTarget(current).TargetFiles;
             if (!actual.SetEquals(expected))
                 throw new IOException("폴더 안의 파일이 변경되어 자동으로 되돌릴 수 없습니다.");
-            foreach (ChangeRecord file in related)
+            foreach (ChangeRecord file in inside)
             {
                 FileInfo info = new FileInfo(file.Current);
                 if (info.Length != file.Length || info.LastWriteTimeUtc.Ticks != file.LastWriteTicks)
                     throw new IOException("폴더 안의 파일이 수정되어 자동으로 되돌릴 수 없습니다: " + file.Current);
             }
-            Directory.CreateDirectory(Path.GetDirectoryName(record.From));
-            Directory.Move(current, record.From);
+            Directory.CreateDirectory(Path.GetDirectoryName(target));
+            Directory.Move(current, target);
+            RemapCurrent(record, current, target);
             foreach (ChangeRecord file in related)
-            {
-                string relative = file.Current.Substring(current.Length).TrimStart(Path.DirectorySeparatorChar);
-                string restored = Path.Combine(record.From, relative);
-                file.Current = restored;
-                if (Engine.Full(file.From).Equals(Engine.Full(restored), StringComparison.OrdinalIgnoreCase))
+                if (Engine.Full(file.From).Equals(Engine.Full(file.Current), StringComparison.OrdinalIgnoreCase))
                     file.Undone = true;
-            }
-            record.Current = record.From; record.Undone = true;
-            return "폴더를 이전 위치로 돌렸습니다: " + Path.GetFileName(record.From);
+            record.Current = target; record.Undone = true;
+            return (record.Reason == RootRenameReason ? "상위 폴더 이름을 되돌렸습니다: " :
+                "폴더를 이전 위치로 돌렸습니다: ") + Path.GetFileName(target);
         }
     }
 }
