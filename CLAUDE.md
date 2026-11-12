@@ -1,11 +1,15 @@
 # Claude Code project handoff
 
+`AGENTS.md` holds the same notes for Codex and other agents. Keep the two files in sync when either changes.
+
 ## Project
 
 - Windows desktop download organizer. C# WinForms, .NET Framework 4; no external LLM/API, Node.js, or Python runtime dependency.
 - The user wants a portable Windows executable that watches a chosen folder recursively, compares new file names with destination folder names and existing file names, moves only confident matches, and leaves ambiguous files for review.
 - UI: main preview and tray monitoring; side-by-side structure editor with drag and drop, Ctrl/Shift multi-selection, file and folder rename, staged apply, progress, and item history/undo.
-- Latest checked-in executable: `DownloadOrganizer-v22.exe`. Keep the versioned executable only for a user-facing release. Do not overwrite a running executable.
+- Latest checked-in executable: `DownloadOrganizer-v22.exe`. Keep the versioned executable only for a user-facing release. Do not overwrite a running executable; build to another name in `dist/` (git-ignored) with `.\build.ps1 -OutputPath dist\<name>.exe`.
+- The app is single-instance per user: a second copy only signals the running one and exits, so close the tray app before trying a new build.
+- If git reports "dubious ownership" (the folder was first created by a sandbox account), the user adds it with `git config --global --add safe.directory <path>`.
 
 ## Build and checks
 
@@ -22,7 +26,8 @@
 - `StructureEditor*.cs`: two-tree plan editor, selection, visuals, drag, rename.
 - `TopicSuggester.cs`, `TopicSuggestionForm.cs`: topic-list suggestions and the review dialog.
 - `SoftUi.cs`: shared colors plus card controls (`CardPanel`, `LocationCard`, `PillLabel`, `ArrowBadge`, `AppHeader`). The structure editor trees use `OwnerDrawAll`; row positions are derived from native `node.Bounds` so hit-testing (chevron, icon, label) stays native. Tests rely on node `BackColor` for drop/search state and on `selectedPathLabel`/`dragGuide` text, so keep those.
-- Unhandled UI exceptions are appended to `%LocalAppData%\DownloadOrganizer\error.log` (`Engine.LogError`); ask the user for that file when they report an error dialog.
+- Unhandled UI exceptions are appended to `%LocalAppData%\DownloadOrganizer\error.log` (`Program.LogError`); ask the user for that file when they report an error dialog.
+- `[STAThread]` must stay directly on `Program.Main` (drag and drop needs an STA thread). Smoke tests have their own `Main`, so `MainForm.Destination.Smoke.cs` checks the app entry point explicitly.
 - `StructurePlanner.cs`: validates snapshots, stages file moves, rolls back failures, handles target-root rename.
 - `ChangeJournal.cs`, `HistoryForm.cs`: item history and undo.
 - `*.Smoke.cs`: focused integration checks; use `FolderRename.Smoke.cs` for root and child folder rename and undo.
